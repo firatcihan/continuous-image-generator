@@ -1,0 +1,10 @@
+node_modules/
+chrome_profil/
+gorseller/
+calisma.log
+basarisizlar.csv
+config.json
+liste.csv
+.DS_Store
+.yarn/
+docs
