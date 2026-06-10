@@ -1,0 +1,10 @@
+{
+  "basePrompt": "Bir kedi, {VARYASYON}, yüksek detaylı",
+  "ciktiKlasoru": "./gorseller",
+  "chromeProfil": "./chrome_profil",
+  "modelAdi": "",
+  "satirArasiBekleme": [5, 15],
+  "uretimZamanAsimiSn": 180,
+  "tekrarDenemeSayisi": 3,
+  "rateLimitVarsayilanBeklemeDk": 15
+}
