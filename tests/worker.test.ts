@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Kapi } from '../src/is/kapi.js';
 import type { Config, GorselSonucu, Satir, UretimTarayicisi } from '../src/tipler.js';
-import { tumSatirlariIsle, type WorkerBagimliliklari } from '../src/worker.js';
+import { tumSatirlariIsle, type UykuSebebi, type WorkerBagimliliklari } from '../src/worker.js';
 
 const CONFIG: Config = {
   basePrompt: 'Bir kedi, {VARYASYON}',
@@ -48,16 +49,25 @@ function sahteTarayici(secenekler: SahteSecenekler = {}) {
 function bagimliliklar(
   tarayici: UretimTarayicisi,
   ek: Partial<WorkerBagimliliklari> = {},
-): WorkerBagimliliklari & { basarisizlar: string[]; beklemeler: number[]; onaylar: string[] } {
+): WorkerBagimliliklari & {
+  basarisizlar: string[];
+  beklemeler: Array<{ ms: number; sebep: UykuSebebi }>;
+  onaylar: string[];
+  olaylar: string[];
+  kontrolcu: AbortController;
+} {
   const basarisizlar: string[] = [];
-  const beklemeler: number[] = [];
+  const beklemeler: Array<{ ms: number; sebep: UykuSebebi }> = [];
   const onaylar: string[] = [];
+  const olaylar: string[] = [];
+  const kontrolcu = new AbortController();
   return {
     config: CONFIG,
     tarayici,
     logger: { bilgi: vi.fn(), uyari: vi.fn(), hata: vi.fn() } as never,
-    uyu: async (ms: number) => {
-      beklemeler.push(ms);
+    kontrol: { signal: kontrolcu.signal, kapi: new Kapi() },
+    uyu: async (ms: number, sebep: UykuSebebi) => {
+      beklemeler.push({ ms, sebep });
     },
     tamamlandiMi: () => false,
     basarisizKaydet: (satir: Satir, sebep: string) => {
@@ -66,9 +76,13 @@ function bagimliliklar(
     kullanicidanDevamBekle: async (mesaj: string) => {
       onaylar.push(mesaj);
     },
+    satirBasladi: (sira, _toplam, satir) => olaylar.push(`basladi:${sira}:${satir.dosyaAdi}`),
+    satirBitti: (sira, sonuc) => olaylar.push(`bitti:${sira}:${sonuc}`),
     basarisizlar,
     beklemeler,
     onaylar,
+    olaylar,
+    kontrolcu,
     ...ek,
   };
 }
@@ -99,7 +113,7 @@ describe('tumSatirlariIsle', () => {
     const b = bagimliliklar(tarayici);
     const ozet = await tumSatirlariIsle(b, [SATIR]);
     expect(ozet.basarili).toBe(1);
-    expect(b.beklemeler).toContain(25 * 60_000);
+    expect(b.beklemeler).toContainEqual({ ms: 25 * 60_000, sebep: 'rateLimit' });
   });
 
   it('süre belirtilmeyen rate limitte varsayılan süre uyur', async () => {
@@ -108,7 +122,7 @@ describe('tumSatirlariIsle', () => {
     });
     const b = bagimliliklar(tarayici);
     await tumSatirlariIsle(b, [SATIR]);
-    expect(b.beklemeler).toContain(15 * 60_000);
+    expect(b.beklemeler).toContainEqual({ ms: 15 * 60_000, sebep: 'rateLimit' });
   });
 
   it('zaman aşımı tekrar deneme sayısını aşınca başarısız yazar', async () => {
@@ -171,5 +185,106 @@ describe('tumSatirlariIsle', () => {
     const ozet = await tumSatirlariIsle(b, [SATIR]);
     expect(ozet.basarili).toBe(1);
     expect(cagrilar).toContain('yenidenBaslat');
+  });
+
+  it('durdurulunca kalan satırları işlemez', async () => {
+    const { tarayici, cagrilar } = sahteTarayici();
+    const b = bagimliliklar(tarayici);
+    b.kontrolcu.abort();
+    const ozet = await tumSatirlariIsle(b, [SATIR, { metin: 'plajda', dosyaAdi: 'plaj' }]);
+    expect(ozet).toEqual({ basarili: 0, atlanan: 0, basarisiz: 0 });
+    expect(cagrilar).not.toContain('uret');
+  });
+
+  it('ilk satırdan sonra durdurulunca ikinciyi işlemez', async () => {
+    const { tarayici, cagrilar } = sahteTarayici({ sonuclar: [{ tip: 'gorsel' }] });
+    const b = bagimliliklar(tarayici, {
+      satirBitti: () => {},
+    });
+    const orijinalUyu = b.uyu;
+    b.uyu = async (ms, sebep) => {
+      b.kontrolcu.abort();
+      await orijinalUyu(ms, sebep);
+    };
+    const ozet = await tumSatirlariIsle(b, [SATIR, { metin: 'plajda', dosyaAdi: 'plaj' }]);
+    expect(ozet.basarili).toBe(1);
+    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(1);
+  });
+
+  it('duraklatılmışken satır başlatmaz, devam edince sürer', async () => {
+    const { tarayici, cagrilar } = sahteTarayici({ sonuclar: [{ tip: 'gorsel' }] });
+    const kapi = new Kapi();
+    const kontrolcu = new AbortController();
+    const b = bagimliliklar(tarayici, { kontrol: { signal: kontrolcu.signal, kapi } });
+    kapi.kapat();
+
+    let bitti = false;
+    const calisma = tumSatirlariIsle(b, [SATIR]).then(() => {
+      bitti = true;
+    });
+
+    await Promise.resolve();
+    expect(cagrilar).not.toContain('uret');
+    expect(bitti).toBe(false);
+
+    kapi.ac();
+    await calisma;
+    expect(cagrilar).toContain('uret');
+  });
+
+  it('satır başladı ve bitti olaylarını sırayla yayınlar', async () => {
+    const { tarayici } = sahteTarayici({ sonuclar: [{ tip: 'gorsel' }] });
+    const b = bagimliliklar(tarayici);
+    await tumSatirlariIsle(b, [SATIR]);
+    expect(b.olaylar).toEqual(['basladi:1:kedi_kar', 'bitti:1:basarili']);
+  });
+
+  it('atlanan satır için atlandı olayı yayınlar', async () => {
+    const { tarayici } = sahteTarayici();
+    const b = bagimliliklar(tarayici, { tamamlandiMi: () => true });
+    await tumSatirlariIsle(b, [SATIR]);
+    expect(b.olaylar).toEqual(['bitti:1:atlandi']);
+  });
+
+  it('satır arası beklemeyi satirArasi sebebiyle yapar', async () => {
+    const { tarayici } = sahteTarayici({ sonuclar: [{ tip: 'gorsel' }] });
+    const b = bagimliliklar(tarayici, { config: { ...CONFIG, satirArasiBekleme: [2, 2] } });
+    await tumSatirlariIsle(b, [SATIR]);
+    expect(b.beklemeler).toContainEqual({ ms: 2000, sebep: 'satirArasi' });
+  });
+  it('geçici hata gelince kısa bekleyip tekrar dener, sonunda başarılı olur', async () => {
+    const { tarayici, cagrilar } = sahteTarayici({
+      sonuclar: [{ tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' }, { tip: 'gorsel' }],
+    });
+    const b = bagimliliklar(tarayici);
+    const ozet = await tumSatirlariIsle(b, [SATIR]);
+    expect(ozet.basarili).toBe(1);
+    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(2);
+    expect(b.beklemeler.some((x) => x.sebep === 'geciciHata')).toBe(true);
+  });
+
+  it('geçici hata deneme hakkı yakar; sürekli gelirse başarısız yazar', async () => {
+    const { tarayici, cagrilar } = sahteTarayici({
+      sonuclar: [
+        { tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' },
+        { tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' },
+        { tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' },
+      ],
+    });
+    const b = bagimliliklar(tarayici);
+    const ozet = await tumSatirlariIsle(b, [SATIR]);
+    expect(ozet.basarisiz).toBe(1);
+    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(3);
+    expect(b.basarisizlar[0]).toContain('geçici hata');
+  });
+
+  it('geçici hatada rate limit beklemesi KADAR uzun beklemez', async () => {
+    const { tarayici } = sahteTarayici({
+      sonuclar: [{ tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' }, { tip: 'gorsel' }],
+    });
+    const b = bagimliliklar(tarayici);
+    await tumSatirlariIsle(b, [SATIR]);
+    const geciciBekleme = b.beklemeler.find((x) => x.sebep === 'geciciHata');
+    expect(geciciBekleme!.ms).toBeLessThan(60_000);
   });
 });

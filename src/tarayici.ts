@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { uyu } from './bekleme.js';
+import { geciciHataAlgila } from './geciciHata.js';
 import { rateLimitAlgila } from './rateLimit.js';
 import { CHATGPT_URL, SECICILER } from './seciciler.js';
 import type { GorselSonucu, UretimTarayicisi } from './tipler.js';
@@ -81,6 +82,12 @@ export class ChatgptTarayicisi implements UretimTarayicisi {
       }
       if (RED_KALIPLARI.some((kalip) => kalip.test(kontrolMetni))) {
         return { tip: 'red', mesaj: kontrolMetni };
+      }
+      // Rate limit ve içerik reddinden SONRA bakılır: o ikisinin kendi ele
+      // alınma yolu var. Burada yakalanmazsa üretim zaman aşımına kadar
+      // (varsayılan 180 sn) boşuna beklenirdi.
+      if (geciciHataAlgila(kontrolMetni)) {
+        return { tip: 'geciciHata', mesaj: kontrolMetni.slice(0, 300) };
       }
 
       const uretimSuruyor = await sayfa
