@@ -7,4 +7,5 @@ config.json
 liste.csv
 .DS_Store
 .yarn/
-docs
+.playwright-mcp/
+.superpowers/
