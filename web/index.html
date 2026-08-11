@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatGPT Görsel Üretici</title>
+<style>
+  :root {
+    --zemin: #f7f7f8; --kart: #ffffff; --metin: #1a1a1a; --soluk: #6b7280;
+    --kenar: #e3e3e6; --vurgu: #10a37f; --uyari: #d97706; --hata: #dc2626;
+    --golge: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --zemin: #1b1b1d; --kart: #252527; --metin: #ececef; --soluk: #9b9ba3;
+      --kenar: #37373b; --golge: 0 1px 3px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--zemin); color: var(--metin);
+    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--kart);
+    border-bottom: 1px solid var(--kenar); position: sticky; top: 0; z-index: 10;
+  }
+  h1 { font-size: 16px; margin: 0; margin-right: auto; font-weight: 650; }
+  button {
+    font: inherit; font-weight: 550; padding: 8px 15px; border-radius: 8px;
+    border: 1px solid var(--kenar); background: var(--kart); color: var(--metin);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--soluk); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.birincil { background: var(--vurgu); border-color: var(--vurgu); color: #fff; }
+  #rozet {
+    font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+    background: var(--zemin); border: 1px solid var(--kenar);
+  }
+  main {
+    display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+    gap: 18px; padding: 18px; max-width: 1400px; margin: 0 auto; align-items: start;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section {
+    background: var(--kart); border: 1px solid var(--kenar);
+    border-radius: 12px; padding: 16px; box-shadow: var(--golge);
+  }
+  section + section { margin-top: 18px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--soluk); margin: 0 0 10px; font-weight: 650; }
+  label { display: block; font-size: 13px; color: var(--soluk); margin: 12px 0 5px; }
+
+  /* Daire içinde soru işareti + üstüne gelince açılan ipucu */
+  .ipucu {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; margin-left: 5px; padding: 0;
+    border-radius: 50%; border: 1px solid var(--soluk);
+    background: transparent; color: var(--soluk);
+    font-size: 10px; font-weight: 700; line-height: 1; cursor: help;
+    position: relative; vertical-align: middle;
+  }
+  .ipucu:hover, .ipucu:focus-visible {
+    border-color: var(--vurgu); color: var(--vurgu); outline: none;
+  }
+  .ipucu::after {
+    content: attr(data-ipucu);
+    position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    width: max-content; max-width: 290px; padding: 9px 11px;
+    background: var(--metin); color: var(--kart);
+    border-radius: 8px; font-size: 12.5px; font-weight: 400; line-height: 1.45;
+    text-align: left; text-transform: none; letter-spacing: normal; white-space: normal;
+    opacity: 0; visibility: hidden; transition: opacity .12s; pointer-events: none;
+    z-index: 50; box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  }
+  .ipucu::before {
+    content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: var(--metin);
+    opacity: 0; visibility: hidden; transition: opacity .12s; pointer-events: none; z-index: 50;
+  }
+  .ipucu:hover::after, .ipucu:focus-visible::after,
+  .ipucu:hover::before, .ipucu:focus-visible::before { opacity: 1; visibility: visible; }
+  /* Sağ kenardaki ipuçları ekran dışına taşmasın */
+  .ipucu.sag::after { left: auto; right: -6px; transform: none; }
+  .ipucu.sag::before { left: auto; right: 1px; transform: none; }
+  textarea, input {
+    width: 100%; font: inherit; padding: 9px 11px; border-radius: 8px;
+    border: 1px solid var(--kenar); background: var(--zemin); color: var(--metin);
+  }
+  textarea { resize: vertical; }
+  textarea.kod { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .hatali { border-color: var(--hata) !important; }
+  .uyari-metin { color: var(--hata); font-size: 13px; margin-top: 6px; display: none; }
+  .satir { display: flex; gap: 10px; }
+  .satir > * { flex: 1; }
+  #onizleme { list-style: none; padding: 0; margin: 8px 0 0; }
+  #onizleme li {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--soluk);
+    padding: 5px 0; border-top: 1px dashed var(--kenar); overflow-wrap: anywhere;
+  }
+  #kullaniciKart {
+    display: none; margin: 0 18px; padding: 14px 16px; border-radius: 12px;
+    background: color-mix(in srgb, var(--uyari) 12%, var(--kart));
+    border: 1px solid var(--uyari);
+  }
+  #kullaniciKart p { margin: 0 0 10px; }
+  #tarayiciKart {
+    margin: 18px 18px 0; padding: 12px 16px; border-radius: 12px;
+    background: color-mix(in srgb, var(--vurgu) 10%, var(--kart));
+    border: 1px solid var(--vurgu);
+  }
+  #tarayiciKart p { margin: 0; font-size: 14px; }
+  #tarayiciKart.gizli { display: none; }
+  #ilerlemeCubuk { height: 7px; background: var(--zemin); border-radius: 999px; overflow: hidden; }
+  #ilerlemeDolgu { height: 100%; width: 0; background: var(--vurgu); transition: width .3s; }
+  #sayaclar { display: flex; gap: 16px; font-size: 13px; color: var(--soluk); margin-top: 10px; }
+  #sayaclar b { color: var(--metin); }
+  #geriSayim { display: none; margin-top: 10px; color: var(--uyari); font-weight: 600; }
+  #galeri {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px; margin-top: 10px;
+  }
+  #galeri figure { margin: 0; }
+  #galeri img {
+    width: 100%; aspect-ratio: 1; object-fit: cover;
+    border-radius: 8px; border: 1px solid var(--kenar); background: var(--zemin);
+  }
+  #galeri figcaption {
+    font-size: 11px; color: var(--soluk); margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bos { color: var(--soluk); font-size: 13px; }
+  #kayit {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--soluk);
+    max-height: 160px; overflow-y: auto; margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ChatGPT Görsel Üretici</h1>
+  <span id="rozet">boşta</span>
+  <button id="btnTarayici">1 · Tarayıcıyı aç</button>
+  <button id="btnBaslat" class="birincil">2 · Başlat</button>
+  <button id="btnDuraklat" disabled>Duraklat</button>
+  <button id="btnDevam" disabled>Devam</button>
+  <button id="btnDurdur" disabled>Durdur</button>
+</header>
+
+<div id="tarayiciKart">
+  <p id="tarayiciMesaj"><b>Önce tarayıcıyı açın.</b> Ayrı bir Chromium penceresi açılacak.
+  İlk kullanımda o pencerede ChatGPT'ye elle giriş yapın — oturum kaydedilir, bir daha sorulmaz.
+  Giriş yaptıktan sonra <b>Başlat</b>'a basın.</p>
+</div>
+
+<div id="kullaniciKart">
+  <p id="kullaniciMesaj"></p>
+  <button id="btnHazir" class="birincil">Giriş yaptım, devam et</button>
+</div>
+
+<main>
+  <div>
+    <section>
+      <h2>Base prompt</h2>
+      <textarea id="basePrompt" class="kod" rows="4"></textarea>
+      <p class="uyari-metin" id="promptUyari">
+        Prompt içinde <code>{VARYASYON}</code> yok — her satır aynı görseli üretirdi.
+      </p>
+      <button id="btnYerTutucu" style="margin-top:8px">{VARYASYON} ekle</button>
+      <h2 style="margin-top:16px">Önizleme — ilk 3 satır</h2>
+      <ul id="onizleme"><li class="bos">Satır ekleyin</li></ul>
+    </section>
+
+    <section>
+      <h2>Satırlar (CSV yapıştırın)</h2>
+      <textarea id="satirlar" class="kod" rows="9"
+        placeholder="metin,dosya_adi&#10;kar yağarken dağ evinde,dag_evi_kis&#10;plajda gün batımında,plaj_gunbatimi"></textarea>
+      <p class="uyari-metin" id="satirUyari"></p>
+      <label>Çıktı klasörü <button type="button" class="ipucu" data-ipucu="Görsellerin kaydedileceği klasör. Bir satırın PNG'si burada zaten varsa o satır atlanır — durdurup yeniden başlattığında kaldığın yerden devam etmeyi bu sağlar." aria-label="Görsellerin kaydedileceği klasör. Bir satırın PNG'si burada zaten varsa o satır atlanır — durdurup yeniden başlattığında kaldığın yerden devam etmeyi bu sağlar.">?</button></label>
+      <input id="ciktiKlasoru" spellcheck="false">
+      <div class="satir">
+        <div>
+          <label>Model adı <button type="button" class="ipucu" data-ipucu="Boş bırakırsan kontrol yapılmaz. Doldurursan her satırdan önce ChatGPT'de seçili modele bakar; uymuyorsa durup seni bekler ve deneme hakkı yakmaz. Parça eşleşmesi: 'gpt-5' yazarsan 'GPT-5 Thinking' de kabul edilir." aria-label="Boş bırakırsan kontrol yapılmaz. Doldurursan her satırdan önce ChatGPT'de seçili modele bakar; uymuyorsa durup seni bekler ve deneme hakkı yakmaz. Parça eşleşmesi: 'gpt-5' yazarsan 'GPT-5 Thinking' de kabul edilir.">?</button></label>
+          <input id="modelAdi" placeholder="GPT-5">
+        </div>
+        <div>
+          <label>Satır arası bekleme (sn) <button type="button" class="ipucu" data-ipucu="Her satırdan sonra bu aralıktan RASTGELE bir süre beklenir (min – maks). Rastgelelik kasıtlı: sabit aralıkla istek atmak makine imzasıdır. Limitlere sık takılıyorsan büyüt." aria-label="Her satırdan sonra bu aralıktan RASTGELE bir süre beklenir (min – maks). Rastgelelik kasıtlı: sabit aralıkla istek atmak makine imzasıdır. Limitlere sık takılıyorsan büyüt.">?</button></label>
+          <div class="satir">
+            <input id="beklemeMin" type="number" min="0">
+            <input id="beklemeMaks" type="number" min="0">
+          </div>
+        </div>
+      </div>
+      <div class="satir">
+        <div><label>Üretim zaman aşımı (sn) <button type="button" class="ipucu" data-ipucu="Bir görselin çıkması için azami bekleme. Sayfa 2 saniyede bir yoklanır; süre dolarsa zaman aşımı sayılır ve DENEME HAKKI YAKILIR." aria-label="Bir görselin çıkması için azami bekleme. Sayfa 2 saniyede bir yoklanır; süre dolarsa zaman aşımı sayılır ve DENEME HAKKI YAKILIR.">?</button></label><input id="zamanAsimi" type="number" min="1"></div>
+        <div><label>Tekrar deneme <button type="button" class="ipucu" data-ipucu="Satır başına deneme sayısı. Hak YAKAR: zaman aşımı, ChatGPT geçici hatası, tarayıcı çökmesi. Hak YAKMAZ: rate limit, oturum düşmesi, yanlış model — bunlarda beklenir ve aynı satır sürer." aria-label="Satır başına deneme sayısı. Hak YAKAR: zaman aşımı, ChatGPT geçici hatası, tarayıcı çökmesi. Hak YAKMAZ: rate limit, oturum düşmesi, yanlış model — bunlarda beklenir ve aynı satır sürer.">?</button></label><input id="tekrarDeneme" type="number" min="1"></div>
+        <div><label>Limit beklemesi (dk) <button type="button" class="ipucu sag" data-ipucu="Sadece yedek değer. Limit mesajında süre yazıyorsa o kullanılır ('25 minutes' → 25 dk). Süre yazmıyorsa buradaki değer. Bekleme sırasında Durdur'a basarsan anında kesilir." aria-label="Sadece yedek değer. Limit mesajında süre yazıyorsa o kullanılır ('25 minutes' → 25 dk). Süre yazmıyorsa buradaki değer. Bekleme sırasında Durdur'a basarsan anında kesilir.">?</button></label><input id="limitBekleme" type="number" min="1"></div>
+      </div>
+      <button id="btnKaydet" style="margin-top:14px">Kaydet</button>
+      <span id="kaydetDurum" class="bos"></span>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>İlerleme</h2>
+      <div id="ilerlemeCubuk"><div id="ilerlemeDolgu"></div></div>
+      <div id="sayaclar">
+        <span>Satır <b id="sayacSira">0</b>/<b id="sayacToplam">0</b></span>
+        <span>Başarılı <b id="sayacBasarili">0</b></span>
+        <span>Atlanan <b id="sayacAtlanan">0</b></span>
+        <span>Başarısız <b id="sayacBasarisiz">0</b></span>
+      </div>
+      <div id="geriSayim"></div>
+      <div id="kayit"></div>
+    </section>
+
+    <section>
+      <h2>Galeri <button id="btnKlasor" style="float:right;font-size:13px;padding:5px 11px">Klasörü aç</button></h2>
+      <div id="galeri"><p class="bos">Henüz görsel yok</p></div>
+    </section>
+  </div>
+</main>
+
+<script type="module">
+const token = new URLSearchParams(location.search).get('t') ?? '';
+const $ = (id) => document.getElementById(id);
+
+async function api(yol, secenekler = {}) {
+  // content-type SADECE gövde varsa gönderilir. Gövdesiz POST'ta JSON başlığı
+  // göndermek sunucunun boş gövdeyi ayrıştırmaya çalışmasına ve 400 dönmesine yol açar.
+  const basliklar = { 'x-token': token, ...(secenekler.headers ?? {}) };
+  if (secenekler.body !== undefined) basliklar['content-type'] = 'application/json';
+
+  const yanit = await fetch(yol, { ...secenekler, headers: basliklar });
+  const govde = yanit.headers.get('content-type')?.includes('json') ? await yanit.json() : null;
+  if (!yanit.ok) throw new Error(govde?.hata ?? `HTTP ${yanit.status}`);
+  return govde;
+}
+
+// ---- proje formu ----
+function satirlariAyristir(metin) {
+  const satirlar = [];
+  for (const ham of metin.split(/\r?\n/)) {
+    const duz = ham.trim();
+    if (duz === '') continue;
+    if (/^metin\s*,\s*dosya_adi$/i.test(duz)) continue;
+    const ayirac = duz.lastIndexOf(',');
+    if (ayirac === -1) throw new Error(`Virgül yok: "${duz}"`);
+    const metinAlan = duz.slice(0, ayirac).trim().replace(/^"|"$/g, '');
+    const dosyaAdi = duz.slice(ayirac + 1).trim().replace(/\.png$/i, '');
+    if (!metinAlan || !dosyaAdi) throw new Error(`Eksik alan: "${duz}"`);
+    satirlar.push({ metin: metinAlan, dosyaAdi });
+  }
+  return satirlar;
+}
+
+function formdanProje(mevcut) {
+  return {
+    ...mevcut,
+    basePrompt: $('basePrompt').value,
+    ciktiKlasoru: $('ciktiKlasoru').value,
+    satirlar: satirlariAyristir($('satirlar').value),
+    ayarlar: {
+      modelAdi: $('modelAdi').value,
+      satirArasiBekleme: [Number($('beklemeMin').value), Number($('beklemeMaks').value)],
+      uretimZamanAsimiSn: Number($('zamanAsimi').value),
+      tekrarDenemeSayisi: Number($('tekrarDeneme').value),
+      rateLimitVarsayilanBeklemeDk: Number($('limitBekleme').value),
+    },
+  };
+}
+
+let proje = null;
+
+function projeyiYaz(p) {
+  proje = p;
+  $('basePrompt').value = p.basePrompt;
+  $('ciktiKlasoru').value = p.ciktiKlasoru;
+  $('satirlar').value = p.satirlar.map((s) => `${s.metin},${s.dosyaAdi}`).join('\n');
+  $('modelAdi').value = p.ayarlar.modelAdi;
+  $('beklemeMin').value = p.ayarlar.satirArasiBekleme[0];
+  $('beklemeMaks').value = p.ayarlar.satirArasiBekleme[1];
+  $('zamanAsimi').value = p.ayarlar.uretimZamanAsimiSn;
+  $('tekrarDeneme').value = p.ayarlar.tekrarDenemeSayisi;
+  $('limitBekleme').value = p.ayarlar.rateLimitVarsayilanBeklemeDk;
+  onizlemeyiTazele();
+}
+
+let onizlemeZaman;
+function onizlemeyiTazele() {
+  clearTimeout(onizlemeZaman);
+  onizlemeZaman = setTimeout(async () => {
+    let satirlar = [];
+    try {
+      satirlar = satirlariAyristir($('satirlar').value);
+      $('satirUyari').style.display = 'none';
+      $('satirlar').classList.remove('hatali');
+    } catch (hata) {
+      $('satirUyari').textContent = hata.message;
+      $('satirUyari').style.display = 'block';
+      $('satirlar').classList.add('hatali');
+    }
+    const sonuc = await api('/api/proje/onizleme', {
+      method: 'POST',
+      body: JSON.stringify({ basePrompt: $('basePrompt').value, satirlar }),
+    });
+    $('promptUyari').style.display = sonuc.yerTutucuVar ? 'none' : 'block';
+    $('basePrompt').classList.toggle('hatali', !sonuc.yerTutucuVar);
+    $('btnBaslat').disabled = !sonuc.yerTutucuVar || satirlar.length === 0 || !tarayiciAcik;
+
+    const liste = $('onizleme');
+    liste.innerHTML = '';
+    if (sonuc.onizleme.length === 0) {
+      liste.innerHTML = '<li class="bos">Önizleme için prompt ve satır gerekli</li>';
+    } else {
+      sonuc.onizleme.forEach((metin, i) => {
+        const li = document.createElement('li');
+        li.textContent = `${i + 1} → ${metin}`;
+        liste.appendChild(li);
+      });
+    }
+  }, 250);
+}
+
+$('basePrompt').addEventListener('input', onizlemeyiTazele);
+$('satirlar').addEventListener('input', onizlemeyiTazele);
+
+$('btnYerTutucu').addEventListener('click', () => {
+  const alan = $('basePrompt');
+  const konum = alan.selectionStart ?? alan.value.length;
+  alan.value = alan.value.slice(0, konum) + '{VARYASYON}' + alan.value.slice(konum);
+  alan.focus();
+  onizlemeyiTazele();
+});
+
+$('btnKaydet').addEventListener('click', async () => {
+  try {
+    projeyiYaz(await api('/api/proje', { method: 'PUT', body: JSON.stringify(formdanProje(proje)) }));
+    $('kaydetDurum').textContent = 'Kaydedildi';
+  } catch (hata) {
+    $('kaydetDurum').textContent = hata.message;
+  }
+  setTimeout(() => ($('kaydetDurum').textContent = ''), 3000);
+});
+
+// ---- iş kontrolü ----
+$('btnBaslat').addEventListener('click', async () => {
+  try {
+    await api('/api/proje', { method: 'PUT', body: JSON.stringify(formdanProje(proje)) });
+    await api('/api/is/baslat', { method: 'POST' });
+  } catch (hata) {
+    kayitEkle(`hata: ${hata.message}`);
+  }
+});
+$('btnTarayici').addEventListener('click', async () => {
+  $('btnTarayici').disabled = true;
+  $('btnTarayici').textContent = 'Açılıyor…';
+  try {
+    const sonuc = await api('/api/tarayici/ac', { method: 'POST' });
+    tarayiciDurumunuUygula(sonuc.acik);
+    kayitEkle('tarayıcı açıldı — ChatGPT\'ye giriş yapıp Başlat\'a basın');
+  } catch (hata) {
+    tarayiciDurumunuUygula(false);
+    kayitEkle(`tarayıcı açılamadı: ${hata.message}`);
+  }
+});
+$('btnDuraklat').addEventListener('click', () => api('/api/is/duraklat', { method: 'POST' }));
+$('btnDevam').addEventListener('click', () => api('/api/is/devam', { method: 'POST' }));
+$('btnDurdur').addEventListener('click', () => api('/api/is/durdur', { method: 'POST' }));
+$('btnHazir').addEventListener('click', () => api('/api/is/kullanici-hazir', { method: 'POST' }));
+$('btnKlasor').addEventListener('click', () => api('/api/klasoru-ac', { method: 'POST' }));
+
+// ---- canlı akış ----
+const ETIKET = {
+  bosta: 'boşta', calisiyor: 'çalışıyor', duraklatildi: 'duraklatıldı',
+  limitBekliyor: 'limit bekleniyor', kullaniciBekliyor: 'sizi bekliyor',
+  bitti: 'bitti', durduruldu: 'durduruldu', hata: 'hata',
+};
+
+let tarayiciAcik = false;
+
+function tarayiciDurumunuUygula(acik) {
+  tarayiciAcik = acik;
+  $('btnTarayici').textContent = acik ? '✓ Tarayıcı açık' : '1 · Tarayıcıyı aç';
+  $('btnTarayici').disabled = acik;
+  $('tarayiciKart').classList.toggle('gizli', acik);
+  onizlemeyiTazele();
+}
+
+function durumuUygula(durum) {
+  $('rozet').textContent = ETIKET[durum] ?? durum;
+  const calisir = ['calisiyor', 'limitBekliyor', 'kullaniciBekliyor'].includes(durum);
+  $('btnBaslat').disabled = calisir || durum === 'duraklatildi' || !tarayiciAcik;
+  $('btnDuraklat').disabled = !calisir;
+  $('btnDevam').disabled = durum !== 'duraklatildi';
+  $('btnDurdur').disabled = !calisir && durum !== 'duraklatildi';
+  if (durum !== 'kullaniciBekliyor') $('kullaniciKart').style.display = 'none';
+  if (durum !== 'limitBekliyor') $('geriSayim').style.display = 'none';
+}
+
+function kayitEkle(metin) {
+  const satir = document.createElement('div');
+  satir.textContent = `${new Date().toLocaleTimeString('tr-TR')} ${metin}`;
+  $('kayit').prepend(satir);
+}
+
+async function galeriyiTazele() {
+  const { dosyalar } = await api('/api/galeri');
+  const kutu = $('galeri');
+  if (dosyalar.length === 0) {
+    kutu.innerHTML = '<p class="bos">Henüz görsel yok</p>';
+    return;
+  }
+  kutu.innerHTML = '';
+  for (const ad of dosyalar) {
+    const sekil = document.createElement('figure');
+    const img = document.createElement('img');
+    img.src = `/api/gorsel/${encodeURIComponent(ad)}?t=${token}`;
+    img.loading = 'lazy';
+    const alt = document.createElement('figcaption');
+    alt.textContent = ad;
+    sekil.append(img, alt);
+    kutu.appendChild(sekil);
+  }
+}
+
+const akis = new EventSource(`/api/is/akis?t=${token}`);
+akis.onmessage = (olayVerisi) => {
+  const olay = JSON.parse(olayVerisi.data);
+  switch (olay.tip) {
+    case 'durum':
+      durumuUygula(olay.durum);
+      $('sayacBasarili').textContent = olay.ozet.basarili;
+      $('sayacAtlanan').textContent = olay.ozet.atlanan;
+      $('sayacBasarisiz').textContent = olay.ozet.basarisiz;
+      break;
+    case 'satirBasladi':
+      $('sayacSira').textContent = olay.sira;
+      $('sayacToplam').textContent = olay.toplam;
+      $('ilerlemeDolgu').style.width = `${(olay.sira / olay.toplam) * 100}%`;
+      kayitEkle(`[${olay.sira}/${olay.toplam}] ${olay.dosyaAdi}`);
+      break;
+    case 'gorselHazir':
+      galeriyiTazele();
+      break;
+    case 'satirBitti':
+      if (olay.sonuc === 'basarisiz') kayitEkle(`başarısız: ${olay.sebep ?? ''}`);
+      break;
+    case 'geciciHata':
+      kayitEkle('ChatGPT geçici hata verdi — kısa bekleyip tekrar denenecek');
+      break;
+    case 'limitBekleniyor': {
+      const dk = Math.floor(olay.kalanSn / 60);
+      const sn = olay.kalanSn % 60;
+      $('geriSayim').style.display = 'block';
+      $('geriSayim').textContent = `Rate limit — ${dk}dk ${String(sn).padStart(2, '0')}sn`;
+      break;
+    }
+    case 'kullaniciGerekli':
+      $('kullaniciMesaj').textContent = olay.mesaj;
+      $('kullaniciKart').style.display = 'block';
+      kayitEkle(olay.mesaj);
+      break;
+    case 'hata':
+      kayitEkle(`hata: ${olay.mesaj}`);
+      break;
+    case 'bitti':
+      kayitEkle(`bitti — başarılı ${olay.ozet.basarili}, atlanan ${olay.ozet.atlanan}, başarısız ${olay.ozet.basarisiz}`);
+      galeriyiTazele();
+      // Sunucu iş bitince tarayıcıyı kapatıyor, ama bunu 'bitti' olayı
+      // yayınlandıktan SONRA yapıyor — durumu biraz bekleyip tazeliyoruz.
+      setTimeout(async () => {
+        const durum = await api('/api/tarayici');
+        if (!durum.acik) {
+          tarayiciDurumunuUygula(false);
+          kayitEkle('tarayıcı kapatıldı');
+        }
+      }, 1500);
+      break;
+  }
+};
+
+projeyiYaz(await api('/api/proje'));
+tarayiciDurumunuUygula((await api('/api/tarayici')).acik);
+durumuUygula((await api('/api/is')).durum);
+galeriyiTazele();
+</script>
+</body>
+</html>
