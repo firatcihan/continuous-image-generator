@@ -20,6 +20,8 @@ export type GorselSonucu =
   | { tip: 'gorsel' }
   | { tip: 'rateLimit'; mesaj: string }
   | { tip: 'red'; mesaj: string }
+  /** ChatGPT'nin geçici/genel hatası ("Bir şeyler ters gitti"). Kısa beklemeyle tekrar denenir. */
+  | { tip: 'geciciHata'; mesaj: string }
   | { tip: 'zamanAsimi' };
 
 export interface UretimTarayicisi {
