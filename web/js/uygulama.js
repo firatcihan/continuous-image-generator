@@ -1,4 +1,5 @@
 import { abone, durum } from './durum.js';
+import { editoruBagla, editoruCiz } from './editor.js';
 import { projeSec, projeleriCiz, projeleriYukle, yeniProjeSatiriAc } from './projeler.js';
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +22,8 @@ async function yonlendir() {
 
 async function baslat() {
   abone(projeleriCiz);
+  abone(editoruCiz);
+  editoruBagla();
 
   $('btnYeniProje').addEventListener('click', () => yeniProjeSatiriAc());
   window.addEventListener('hashchange', () => void yonlendir());

@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { durum, guncelle, projeCalisiyorMu } from './durum.js';
+import { bekleyeniBosalt } from './kaydet.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -21,6 +22,9 @@ async function projeUygula(proje) {
 
 /** Aktif projeyi yükler ve hash'i eşitler. id null ise boş duruma geçer. */
 export async function projeSec(id) {
+  // Bekleyen otomatik kaydetme varsa debounce beklemeden yaz — proje
+  // değiştirirken değişiklik kaybolmasın.
+  await bekleyeniBosalt();
   if (id === null) {
     guncelle({ aktifProje: null, galeri: { dosyalar: [], toplamBayt: 0 } });
     return;
