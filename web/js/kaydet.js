@@ -105,7 +105,6 @@ async function yaz(proje) {
       // dokunulmuyor.
       guncelle({ aktifProje: yazilan });
     }
-    await projeleriYukle(); // sol paneldeki ad ve satır sayısı tazelenir
   } catch (hata) {
     // Aynı mantık ters yönde: bu yazma artık eskiyse, başarısızlığı da
     // göstergeye yazma — daha yeni bir "geçersiz" ya da (bir sonraki yazma
@@ -113,6 +112,17 @@ async function yaz(proje) {
     if (buSurum === surum) {
       guncelle({ kaydetDurumu: 'gecersiz', hata: hata.message });
     }
+  }
+
+  // Sol paneldeki ad ve satır sayısını tazeler. KASITLI olarak yukarıdaki
+  // try/catch'in DIŞINDA: içindeyken bu isteğin başarısızlığı catch'i
+  // tetikliyordu ve kayıt BAŞARIYLA yazılmış olmasına rağmen gösterge
+  // "Geçersiz — kaydedilmedi" diyordu. Panel tazelemesi kaydın doğruluğunu
+  // etkilemez, o yüzden başarısızlığı yalnızca loglanıyor.
+  try {
+    await projeleriYukle();
+  } catch (hata) {
+    console.warn('sol panel tazelenemedi:', hata);
   }
 }
 

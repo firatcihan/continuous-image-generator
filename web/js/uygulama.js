@@ -1,5 +1,6 @@
 import { abone, durum } from './durum.js';
 import { editoruBagla, editoruCiz } from './editor.js';
+import { listeyiBagla, listeyiCiz } from './liste.js';
 import { projeSec, projeleriCiz, projeleriYukle, yeniProjeSatiriAc } from './projeler.js';
 
 const $ = (id) => document.getElementById(id);
@@ -22,8 +23,13 @@ async function yonlendir() {
 
 async function baslat() {
   abone(projeleriCiz);
+  // Satır tablosu editörden önce çizilir: ikisi de `durum`dan okuyor, ama
+  // proje değişiminde tablonun kurulu olması önizleme listesinin yanındaki
+  // satır sayacıyla aynı turda tutarlı görünmesini sağlıyor.
+  abone(listeyiCiz);
   abone(editoruCiz);
   editoruBagla();
+  listeyiBagla();
 
   $('btnYeniProje').addEventListener('click', () => yeniProjeSatiriAc());
   window.addEventListener('hashchange', () => void yonlendir());
