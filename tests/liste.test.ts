@@ -54,9 +54,17 @@ describe('satirlariAyristir', () => {
     expect(satirlariAyristir('')).toEqual([]);
   });
 
-  it('yazım hatalı başlığı (yalnızca biri eşleşen) veri saymaz, hata fırlatır', () => {
-    expect(() => satirlariAyristir('metin,dosyaadi\nkarda,a\n')).toThrow(
-      'metin,dosya_adi',
-    );
+  it('ilk hücresi tam olarak "metin" olan bir veri satırını başlık sanmaz', () => {
+    expect(satirlariAyristir('metin,a\n')).toEqual([{ metin: 'metin', dosyaAdi: 'a' }]);
+  });
+
+  it('başlık iki sütun adını da içermiyorsa veri satırı sayılır', () => {
+    // "dosyaadi" (alt çizgisiz) yazım hatası kasıtlı olarak yakalanmıyor:
+    // bunu ayırt etmenin tek yolu tahmin etmek, ve yanlış bir tahmin
+    // yukarıdaki gibi tamamen geçerli bir veri satırını reddeder.
+    expect(satirlariAyristir('metin,dosyaadi\nkarda,a\n')).toEqual([
+      { metin: 'metin', dosyaAdi: 'dosyaadi' },
+      { metin: 'karda', dosyaAdi: 'a' },
+    ]);
   });
 });
