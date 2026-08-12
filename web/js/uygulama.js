@@ -42,6 +42,12 @@ async function baslat() {
   silmeyiBagla();
 
   $('btnYeniProje').addEventListener('click', () => yeniProjeSatiriAc());
+  $('btnAyarlar').addEventListener('click', () => {
+    // Alanlar `ayarlariCiz` ile proje seçildiğinde kuruluyor; diyalog kapalıyken
+    // de DOM'da duruyorlar, `formdanProje()` onları okumaya devam ediyor.
+    if (durum.aktifProje !== null) $('ayarDiyalogu').showModal();
+  });
+  $('ayarKapat').addEventListener('click', () => $('ayarDiyalogu').close());
   $('btnKlasor').addEventListener('click', async () => {
     if (durum.aktifProje === null) return;
     try {

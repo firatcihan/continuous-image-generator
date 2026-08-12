@@ -19,7 +19,7 @@ header {
   padding: 14px 20px; background: var(--kart);
   border-bottom: 1px solid var(--kenar); position: sticky; top: 0; z-index: 10;
 }
-h1 { font-size: 16px; margin: 0; margin-right: auto; font-weight: 650; }
+h1 { font-size: 16px; margin: 0; font-weight: 650; }
 button {
   font: inherit; font-weight: 550; padding: 8px 15px; border-radius: 8px;
   border: 1px solid var(--kenar); background: var(--kart); color: var(--metin);
@@ -181,3 +181,17 @@ dialog .onay { display: flex; align-items: center; gap: 7px; margin: 12px 0; fon
 dialog .onay input { width: auto; }
 .diyalog-butonlar { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 button.tehlike { background: var(--hata); border-color: var(--hata); color: #fff; }
+
+/* Proje adının yanındaki dişli. margin-right: auto burada: eskiden h1'deydi,
+   dişliyi ada yapıştırmak için sağa itme görevi bir sonraki öğeye geçti. */
+button.ikon {
+  padding: 5px 9px; font-size: 15px; line-height: 1; margin-right: auto;
+  color: var(--soluk);
+}
+button.ikon:hover:not(:disabled) { color: var(--metin); }
+
+#ayarDiyalogu { max-width: 620px; width: min(620px, calc(100vw - 32px)); }
+/* Dört kısa alan yan yana; uzun yolu (çıktı klasörü) tam genişlikte bırakır. */
+.ayar-izgara { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.ayar-izgara label { margin-top: 14px; }
+#ayarDiyalogu .ayar-izgara input { max-width: 100%; }

@@ -22,6 +22,7 @@
 
   <header>
     <h1 id="projeAdi">—</h1>
+    <button id="btnAyarlar" class="ikon" title="Proje ayarları">⚙</button>
     <span id="kaydetDurum" class="soluk"></span>
     <button id="btnTarayici">1 · Tarayıcıyı aç</button>
     <button id="btnBaslat" class="birincil">2 · Başlat</button>
@@ -62,10 +63,21 @@
         <button id="btnSatirEkle">Satır ekle</button>
       </section>
 
-      <section>
-        <h2>Ayarlar</h2>
+      <!--
+        Ayarlar diyaloğu KASITLI olarak #projeEkrani içinde duruyor: showModal()
+        onu üst katmanda çizse de DOM'daki yeri değişmez, böylece çalışan
+        projede alanları salt-okunur yapan `.kilitli input` kuralı burada da
+        geçerli olur. Kapat butonu `serbest` sınıfını taşımak zorunda — o kural
+        `button:not(.serbest)` ile butonları da devre dışı bırakıyor, aksi halde
+        kilitliyken diyalog kapatılamazdı.
+      -->
+      <dialog id="ayarDiyalogu">
+        <h2>Proje ayarları</h2>
         <div id="ayarlar"></div>
-      </section>
+        <div class="diyalog-butonlar">
+          <button id="ayarKapat" class="serbest">Kapat</button>
+        </div>
+      </dialog>
     </div>
 
     <div class="kolon">

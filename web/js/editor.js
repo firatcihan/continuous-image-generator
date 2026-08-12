@@ -184,7 +184,11 @@ function ayarlariCiz(proje) {
   }
   kap.append(beklemeKap);
 
+  // Kalan dört alan yan yana: hepsi kısa değerler, tam genişlik istemiyor.
+  const izgara = document.createElement('div');
+  izgara.className = 'ayar-izgara';
   for (const alan of AYAR_ALANLARI) {
+    const hucre = document.createElement('div');
     const etiket = document.createElement('label');
     etiket.textContent = alan.etiket;
     if (alan.ipucu) etiket.title = alan.ipucu;
@@ -194,8 +198,10 @@ function ayarlariCiz(proje) {
     if (alan.tur === 'number') girdi.min = '1';
     girdi.value = String(proje.ayarlar[alan.anahtar]);
     etiket.htmlFor = girdi.id;
-    kap.append(etiket, girdi);
+    hucre.append(etiket, girdi);
+    izgara.append(hucre);
   }
+  kap.append(izgara);
 
   kap.dataset.kuruldu = '1';
   kap.addEventListener('input', () => void degisiklikBildir());

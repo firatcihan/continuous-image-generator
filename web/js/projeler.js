@@ -128,6 +128,8 @@ export function projeleriCiz() {
   $('bosDurum').hidden = durum.projeler.length > 0;
   $('projeEkrani').hidden = durum.aktifProje === null;
   $('projeAdi').textContent = durum.aktifProje ? durum.aktifProje.ad : '—';
+  // Proje yokken dişlinin açacağı bir ayar formu da yok
+  $('btnAyarlar').hidden = durum.aktifProje === null;
 
   if (acikDeger !== null) {
     yeniProjeSatiriAc();
