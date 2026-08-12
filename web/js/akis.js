@@ -1,6 +1,6 @@
 import { durum, guncelle } from './durum.js';
 import { galeriyiYukle } from './galeri.js';
-import { kayitEkle } from './ilerleme.js';
+import { kayitEkle, tarayiciDurumunuTazele } from './ilerleme.js';
 import { projeleriYukle } from './projeler.js';
 
 /**
@@ -28,6 +28,9 @@ export function akisiBaslat() {
   });
 }
 
+/** İşin bittiği durumlar — bunlarda tarayıcı kapanmış olabilir. */
+const UC_DURUMLAR = ['bitti', 'durduruldu', 'hata'];
+
 async function olayIsle(olay) {
   const is = { ...durum.is };
 
@@ -39,6 +42,9 @@ async function olayIsle(olay) {
       if (olay.durum !== 'limitBekliyor') is.kalanSn = null;
       if (olay.durum !== 'kullaniciBekliyor') is.mesaj = null;
       guncelle({ is, akisBagli: true });
+      // İş bitti: `baslat.ts` kendiliğinden bitişte Chromium'u kapatıyor,
+      // butonların gerçeği yansıtması için durumu yeniden oku (bkz. ilerleme.js).
+      if (UC_DURUMLAR.includes(olay.durum)) await tarayiciDurumunuTazele();
       return;
 
     case 'satirBasladi':
@@ -90,6 +96,11 @@ async function olayIsle(olay) {
       );
       await projeleriYukle();
       if (durum.aktifProje !== null) await galeriyiYukle(durum.aktifProje.id);
+      // İkinci kez okunuyor: `durum` olayı sunucuda tarayıcı KAPATILMADAN önce
+      // yayınlanıyor (durumDegistir -> yayinla -> baslat() döner -> ancak sonra
+      // tarayiciKapat). O yüzden 'bitti' olayı daha güvenli bir andır; ikisi
+      // birden yarışı pratikte kapatıyor.
+      await tarayiciDurumunuTazele();
       return;
 
     default:

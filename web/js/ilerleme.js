@@ -178,7 +178,17 @@ function seridiCiz() {
   }
 }
 
-async function tarayiciDurumunuTazele() {
+/**
+ * Tarayıcının gerçekten açık olup olmadığını sunucudan okur.
+ *
+ * İş kendiliğinden bittiğinde `baslat.ts` Chromium'u KAPATIYOR (200 görsellik
+ * koşudan sonra ortada pencere kalmasın diye). UI bunu hiçbir olaydan
+ * öğrenemiyordu: buton "✓ Tarayıcı açık" ve PASİF kalıyor, Başlat ise etkin
+ * görünüp sunucudan 409 "Önce tarayıcıyı açıp…" alıyordu — kullanıcı ne
+ * tarayıcıyı açabiliyor ne işi başlatabiliyordu, tek çıkış sayfayı
+ * yenilemekti. Bu yüzden `akis.js` iş bir uç duruma geldiğinde bunu çağırıyor.
+ */
+export async function tarayiciDurumunuTazele() {
   try {
     guncelle({ tarayiciAcik: (await api.tarayici()).acik });
   } catch (hata) {
