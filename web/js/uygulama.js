@@ -6,6 +6,7 @@ import { galeriyiCiz } from './galeri.js';
 import { ilerlemeyiBagla, ilerlemeyiCiz, isDurumunuTazele, kayitEkle } from './ilerleme.js';
 import { listeyiBagla, listeyiCiz } from './liste.js';
 import { projeSec, projeleriCiz, projeleriYukle, yeniProjeSatiriAc } from './projeler.js';
+import { silmeyiBagla } from './silme.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,6 +39,7 @@ async function baslat() {
   editoruBagla();
   listeyiBagla();
   ilerlemeyiBagla();
+  silmeyiBagla();
 
   $('btnYeniProje').addEventListener('click', () => yeniProjeSatiriAc());
   $('btnKlasor').addEventListener('click', async () => {

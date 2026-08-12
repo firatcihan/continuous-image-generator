@@ -168,3 +168,16 @@ button.kucuk { float: right; font-size: 12px; padding: 4px 9px; font-weight: 500
 .satir-tablosu td.silme button { padding: 3px 7px; font-size: 12px; }
 
 .yeni-proje-girdisi { width: 100%; padding: 4px 6px; font-size: 14px; }
+
+dialog {
+  border: 1px solid var(--kenar); border-radius: 12px; padding: 18px 20px;
+  background: var(--kart); color: var(--metin); max-width: 460px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.28);
+}
+dialog::backdrop { background: rgba(0,0,0,.42); }
+dialog h2 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--metin); }
+dialog .kod { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
+dialog .onay { display: flex; align-items: center; gap: 7px; margin: 12px 0; font-size: 14px; }
+dialog .onay input { width: auto; }
+.diyalog-butonlar { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+button.tehlike { background: var(--hata); border-color: var(--hata); color: #fff; }
