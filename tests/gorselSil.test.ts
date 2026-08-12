@@ -81,6 +81,35 @@ describe('klasorGorselleriniSil', () => {
     expect(existsSync(join(klasor, 'a.png'))).toBe(true);
   });
 
+  it('sonunda / olan korumalı kök yolunu da reddeder', () => {
+    writeFileSync(join(klasor, 'a.png'), 'x');
+
+    const sonuc = klasorGorselleriniSil(klasor, [`${klasor}/`]);
+
+    expect(sonuc).toEqual({ silinen: 0, silinemeyen: [], korumaliKlasor: true });
+    expect(existsSync(join(klasor, 'a.png'))).toBe(true);
+  });
+
+  it('nokta segmenti içeren korumalı kök yolunu da reddeder', () => {
+    writeFileSync(join(klasor, 'a.png'), 'x');
+
+    const sonuc = klasorGorselleriniSil(klasor, [join(klasor, '.')]);
+
+    expect(sonuc).toEqual({ silinen: 0, silinemeyen: [], korumaliKlasor: true });
+    expect(existsSync(join(klasor, 'a.png'))).toBe(true);
+  });
+
+  it('klasöre symlink ile ulaşan korumalı kökü de reddeder', () => {
+    writeFileSync(join(klasor, 'a.png'), 'x');
+    const bag = join(kok, 'kok-bagi');
+    symlinkSync(klasor, bag);
+
+    const sonuc = klasorGorselleriniSil(klasor, [bag]);
+
+    expect(sonuc).toEqual({ silinen: 0, silinemeyen: [], korumaliKlasor: true });
+    expect(existsSync(join(klasor, 'a.png'))).toBe(true);
+  });
+
   it('bir dosya silinemezse diğerlerine devam eder ve raporlar', () => {
     writeFileSync(join(klasor, 'a.png'), 'x');
     writeFileSync(join(klasor, 'b.png'), 'x');
