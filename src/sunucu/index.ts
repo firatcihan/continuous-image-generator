@@ -1,16 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import { idGecerliMi } from '../depo/kimlik.js';
+import type { Proje, ProjelerDepo } from '../depo/projeler.js';
 import { gercekYolIcerdeMi, icerdeMi } from '../depo/yollar.js';
-import type { Proje, ProjeDepo } from '../depo/projeDepo.js';
-import { projeDogrula } from '../depo/projeDepo.js';
 import type { IsYoneticisi } from '../is/isYoneticisi.js';
+import { satirlariAyristir } from '../liste.js';
 import { onizlemeUret, yerTutucuVarMi } from '../prompt.js';
 import type { Satir } from '../tipler.js';
 import { istekYetkili } from './guvenlik.js';
 
 export interface SunucuBagimliliklari {
-  depo: ProjeDepo;
+  depo: ProjelerDepo;
   isYoneticisi: IsYoneticisi;
   isBaslat: (proje: Proje) => void;
   /** Tarayıcıyı iş başlatmadan açar — kullanıcı ChatGPT'ye giriş yapabilsin diye. */
@@ -18,7 +19,6 @@ export interface SunucuBagimliliklari {
   tarayiciAcikMi: () => boolean;
   token: string;
   izinliOrigin: () => string;
-  ciktiKoku: string;
   webKlasoru: string;
   klasoruAc: (yol: string) => void;
 }
@@ -34,6 +34,20 @@ const MESGUL_DURUMLAR = ['calisiyor', 'duraklatildi', 'limitBekliyor', 'kullanic
 export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
   const uygulama = Fastify({ logger: false });
   uygulama.decorate('testIsYoneticisi', b.isYoneticisi);
+
+  /** Projeyi okur; yoksa 404 gönderir ve null döner. */
+  const projeVeya404 = (id: string, yanit: FastifyReply): Proje | null => {
+    const proje = idGecerliMi(id) ? b.depo.oku(id) : null;
+    if (proje === null) {
+      yanit.code(404).send({ hata: 'proje bulunamadı' });
+      return null;
+    }
+    return proje;
+  };
+
+  /** Bu proje şu an üretim yapıyorsa true — düzenleme ve silme kilidi. */
+  const projeCalisiyorMu = (id: string): boolean =>
+    mesgulMu(b.isYoneticisi) && b.isYoneticisi.bilgi().projeId === id;
 
   // Tarayıcı, gövdesi olmayan POST'larda bile `content-type: application/json`
   // gönderir. Fastify'ın varsayılan ayrıştırıcısı boş gövdeyi 400 ile reddeder
@@ -78,27 +92,69 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
     return yanit.type('text/html; charset=utf-8').send(html);
   });
 
-  uygulama.get('/api/proje', async () => b.depo.oku(b.ciktiKoku));
+  uygulama.get('/api/projeler', async () => b.depo.listele());
 
-  uygulama.put('/api/proje', async (istek, yanit) => {
-    if (mesgulMu(b.isYoneticisi)) {
-      return yanit.code(409).send({ hata: 'iş çalışırken proje değiştirilemez' });
-    }
-    // Boş gövde artık ayrıştırıcıda `undefined` oluyor; açıkça reddet, yoksa
-    // projeDogrula varsayılanları döndürüp kullanıcının projesini sessizce ezerdi.
-    if (istek.body === undefined || istek.body === null) {
-      return yanit.code(400).send({ hata: 'proje gövdesi gerekli' });
-    }
+  uygulama.post('/api/projeler', async (istek, yanit) => {
+    const govde = (istek.body ?? {}) as { ad?: unknown };
+    const ad = typeof govde.ad === 'string' ? govde.ad.trim() : '';
+    if (ad === '') return yanit.code(400).send({ hata: 'proje adı gerekli' });
+
     try {
-      const proje = projeDogrula(istek.body, b.ciktiKoku);
-      b.depo.yaz(proje);
-      return b.depo.oku(b.ciktiKoku);
+      return yanit.code(201).send(b.depo.olustur(ad));
     } catch (hata) {
       return yanit.code(400).send({ hata: (hata as Error).message });
     }
   });
 
-  uygulama.post('/api/proje/onizleme', async (istek) => {
+  uygulama.get('/api/projeler/:id', async (istek, yanit) => {
+    const { id } = istek.params as { id: string };
+    const proje = projeVeya404(id, yanit);
+    return proje === null ? yanit : proje;
+  });
+
+  uygulama.put('/api/projeler/:id', async (istek, yanit) => {
+    const { id } = istek.params as { id: string };
+    const mevcut = projeVeya404(id, yanit);
+    if (mevcut === null) return yanit;
+
+    if (projeCalisiyorMu(id)) {
+      return yanit.code(409).send({ hata: 'bu proje çalışıyor; önce durdurun' });
+    }
+    // Boş gövde ayrıştırıcıda `undefined` oluyor; açıkça reddet, yoksa
+    // projeDogrula varsayılanları döndürüp kullanıcının projesini ezerdi.
+    if (istek.body === undefined || istek.body === null) {
+      return yanit.code(400).send({ hata: 'proje gövdesi gerekli' });
+    }
+
+    try {
+      // Yoldaki id kazanır: gövdedeki id ile başka bir projenin üzerine yazılamaz.
+      return b.depo.guncelle(id, istek.body);
+    } catch (hata) {
+      return yanit.code(400).send({ hata: (hata as Error).message });
+    }
+  });
+
+  uygulama.delete('/api/projeler/:id', async (istek, yanit) => {
+    const { id } = istek.params as { id: string };
+    if (projeVeya404(id, yanit) === null) return yanit;
+
+    if (projeCalisiyorMu(id)) {
+      return yanit.code(409).send({ hata: 'bu proje çalışıyor; önce durdurun' });
+    }
+
+    const sorgu = istek.query as { gorselleriSil?: string };
+    const sonuc = b.depo.sil(id, sorgu.gorselleriSil === '1');
+    return {
+      silinen: sonuc.silinen,
+      silinemeyen: sonuc.silinemeyen,
+      korumaliKlasor: sonuc.korumaliKlasor,
+    };
+  });
+
+  uygulama.post('/api/projeler/:id/onizleme', async (istek, yanit) => {
+    const { id } = istek.params as { id: string };
+    if (projeVeya404(id, yanit) === null) return yanit;
+
     const govde = (istek.body ?? {}) as { basePrompt?: string; satirlar?: Satir[] };
     const basePrompt = govde.basePrompt ?? '';
     const satirlar = Array.isArray(govde.satirlar) ? govde.satirlar : [];
@@ -106,6 +162,62 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
       yerTutucuVar: yerTutucuVarMi(basePrompt),
       onizleme: onizlemeUret(basePrompt, satirlar),
     };
+  });
+
+  uygulama.get('/api/projeler/:id/galeri', async (istek, yanit) => {
+    const { id } = istek.params as { id: string };
+    const proje = projeVeya404(id, yanit);
+    if (proje === null) return yanit;
+
+    if (!existsSync(proje.ciktiKlasoru)) return { dosyalar: [], toplamBayt: 0 };
+
+    const dosyalar = readdirSync(proje.ciktiKlasoru)
+      .filter((ad) => ad.toLowerCase().endsWith('.png'))
+      .sort();
+
+    // Silme diyaloğu "48 görsel (12,4 MB)" satırını buradan besler; istemci tahmin etmez.
+    let toplamBayt = 0;
+    for (const ad of dosyalar) {
+      try {
+        toplamBayt += statSync(join(proje.ciktiKlasoru, ad)).size;
+      } catch {
+        // dosya arada silinmiş olabilir; toplamı bozmadan geç
+      }
+    }
+    return { dosyalar, toplamBayt };
+  });
+
+  uygulama.get('/api/projeler/:id/gorsel/:ad', async (istek, yanit) => {
+    const { id, ad } = istek.params as { id: string; ad: string };
+    const proje = projeVeya404(id, yanit);
+    if (proje === null) return yanit;
+
+    if (!ad.toLowerCase().endsWith('.png')) {
+      return yanit.code(400).send({ hata: 'yalnızca png servis edilir' });
+    }
+
+    const klasor = proje.ciktiKlasoru;
+    const istenen = join(klasor, ad);
+
+    // Önce sözdizimsel kontrol (ucuz, `..` gibi kaba denemeleri eler)
+    if (!icerdeMi(klasor, istenen)) {
+      return yanit.code(400).send({ hata: 'klasör dışına çıkılamaz' });
+    }
+    // Sonra symlink çözerek gerçek kontrol — `icerdeMi` symlink çözmez
+    const yol = gercekYolIcerdeMi(klasor, istenen);
+    if (yol === null) return yanit.code(404).send({ hata: 'görsel bulunamadı' });
+
+    return yanit.type('image/png').send(readFileSync(yol));
+  });
+
+  uygulama.post('/api/projeler/:id/klasoru-ac', async (istek, yanit) => {
+    const { id } = istek.params as { id: string };
+    const proje = projeVeya404(id, yanit);
+    if (proje === null) return yanit;
+
+    mkdirSync(proje.ciktiKlasoru, { recursive: true });
+    b.klasoruAc(proje.ciktiKlasoru);
+    return { acildi: true };
   });
 
   uygulama.get('/api/tarayici', async () => ({ acik: b.tarayiciAcikMi() }));
@@ -122,19 +234,37 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
 
   uygulama.get('/api/is', async () => b.isYoneticisi.bilgi());
 
-  uygulama.post('/api/is/baslat', async (_istek, yanit) => {
+  // CSV ayrıştırma tek yerde: tarayıcıda ikinci bir ayrıştırıcı olsa kopyalar
+  // zamanla ayrışır ve kullanıcının CSV'si tarayıcıda geçip sunucuda reddedilirdi.
+  uygulama.post('/api/csv/ayristir', async (istek, yanit) => {
+    const govde = (istek.body ?? {}) as { icerik?: unknown };
+    if (typeof govde.icerik !== 'string') {
+      return yanit.code(400).send({ hata: 'icerik metni gerekli' });
+    }
+    try {
+      return { satirlar: satirlariAyristir(govde.icerik) };
+    } catch (hata) {
+      return yanit.code(400).send({ hata: (hata as Error).message });
+    }
+  });
+
+  uygulama.post('/api/is/baslat', async (istek, yanit) => {
     if (mesgulMu(b.isYoneticisi)) {
       return yanit.code(409).send({ hata: 'bir iş zaten çalışıyor' });
     }
+
+    const govde = (istek.body ?? {}) as { projeId?: unknown };
+    if (typeof govde.projeId !== 'string') {
+      return yanit.code(400).send({ hata: 'projeId gerekli' });
+    }
+    const proje = projeVeya404(govde.projeId, yanit);
+    if (proje === null) return yanit;
+
     // Tarayıcı açık değilse iş başlatılmaz: kullanıcının ChatGPT'ye giriş
     // yapacak bir anı olmalı, yoksa iş açılır açılmaz sohbete yazmaya başlar.
     if (!b.tarayiciAcikMi()) {
-      return yanit.code(409).send({
-        hata: 'Önce tarayıcıyı açıp ChatGPT\'ye giriş yapın',
-      });
+      return yanit.code(409).send({ hata: 'Önce tarayıcıyı açıp ChatGPT\'ye giriş yapın' });
     }
-    const proje = b.depo.oku(b.ciktiKoku);
-
     if (proje.satirlar.length === 0) {
       return yanit.code(400).send({ hata: 'listede hiç satır yok' });
     }
@@ -180,43 +310,6 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
       sok();
       if (!yanit.raw.writableEnded) yanit.raw.end();
     });
-  });
-
-  uygulama.get('/api/galeri', async () => {
-    const klasor = b.depo.oku(b.ciktiKoku).ciktiKlasoru;
-    if (!existsSync(klasor)) return { dosyalar: [] };
-    const dosyalar = readdirSync(klasor)
-      .filter((ad) => ad.toLowerCase().endsWith('.png'))
-      .sort();
-    return { dosyalar };
-  });
-
-  uygulama.get('/api/gorsel/:ad', async (istek, yanit) => {
-    const { ad } = istek.params as { ad: string };
-    if (!ad.toLowerCase().endsWith('.png')) {
-      return yanit.code(400).send({ hata: 'yalnızca png servis edilir' });
-    }
-
-    const klasor = b.depo.oku(b.ciktiKoku).ciktiKlasoru;
-    const istenen = join(klasor, ad);
-
-    // Önce sözdizimsel kontrol (ucuz, `..` gibi kaba denemeleri eler)
-    if (!icerdeMi(klasor, istenen)) {
-      return yanit.code(400).send({ hata: 'klasör dışına çıkılamaz' });
-    }
-    // Sonra symlink çözerek gerçek kontrol — `icerdeMi` symlink çözmez
-    const yol = gercekYolIcerdeMi(klasor, istenen);
-    if (yol === null) {
-      return yanit.code(404).send({ hata: 'görsel bulunamadı' });
-    }
-    return yanit.type('image/png').send(readFileSync(yol));
-  });
-
-  uygulama.post('/api/klasoru-ac', async () => {
-    const klasor = b.depo.oku(b.ciktiKoku).ciktiKlasoru;
-    mkdirSync(klasor, { recursive: true });
-    b.klasoruAc(klasor);
-    return { acildi: true };
   });
 
   return uygulama;

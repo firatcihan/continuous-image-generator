@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ProjeDepo, varsayilanProje } from '../src/depo/projeDepo.js';
+import { ProjelerDepo, type Proje } from '../src/depo/projeler.js';
 import { IsYoneticisi } from '../src/is/isYoneticisi.js';
 import { sunucuOlustur } from '../src/sunucu/index.js';
 
@@ -17,6 +17,7 @@ const ORIGIN = 'http://127.0.0.1:3000';
 const yetkili = () => ({ 'x-token': TOKEN, origin: ORIGIN });
 
 let kok: string;
+let p: Proje;
 let uygulama: ReturnType<typeof sunucuOlustur>;
 let tarayiciAcmaSayisi: number;
 let tarayiciAcik: boolean;
@@ -28,11 +29,9 @@ function sunucuKur(): void {
   mkdirSync(web, { recursive: true });
   writeFileSync(join(web, 'index.html'), '<h1>x</h1>', 'utf-8');
 
-  const depo = new ProjeDepo(kok);
-  depo.yaz({
-    ...varsayilanProje(join(kok, 'cikti')),
-    satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }],
-  });
+  const depo = new ProjelerDepo(kok, join(kok, 'cikti'));
+  p = depo.olustur('Kedi');
+  depo.yaz({ ...p, satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }] });
 
   uygulama = sunucuOlustur({
     depo,
@@ -48,7 +47,6 @@ function sunucuKur(): void {
     tarayiciAcikMi: () => tarayiciAcik,
     token: TOKEN,
     izinliOrigin: () => ORIGIN,
-    ciktiKoku: join(kok, 'cikti'),
     webKlasoru: web,
     klasoruAc: () => {},
   });
@@ -116,7 +114,9 @@ describe('POST /api/tarayici/ac', () => {
 
 describe('POST /api/is/baslat tarayıcı kapalıyken', () => {
   it('409 döner ve iş başlatmaz — önce giriş yapılmalı', async () => {
-    const y = await uygulama.inject({ method: 'POST', url: '/api/is/baslat', headers: yetkili() });
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/is/baslat', headers: yetkili(), payload: { projeId: p.id },
+    });
     expect(y.statusCode).toBe(409);
     expect(y.json().hata).toMatch(/tarayıcı/i);
     expect(baslatilanIsler).toBe(0);
@@ -124,7 +124,9 @@ describe('POST /api/is/baslat tarayıcı kapalıyken', () => {
 
   it('tarayıcı açıldıktan sonra iş başlar', async () => {
     await uygulama.inject({ method: 'POST', url: '/api/tarayici/ac', headers: yetkili() });
-    const y = await uygulama.inject({ method: 'POST', url: '/api/is/baslat', headers: yetkili() });
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/is/baslat', headers: yetkili(), payload: { projeId: p.id },
+    });
     expect(y.statusCode).toBe(202);
     expect(baslatilanIsler).toBe(1);
   });

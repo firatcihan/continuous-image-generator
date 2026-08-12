@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ProjeDepo, varsayilanProje } from '../src/depo/projeDepo.js';
+import { ProjelerDepo, type Proje } from '../src/depo/projeler.js';
 import { IsYoneticisi } from '../src/is/isYoneticisi.js';
 import { sunucuOlustur } from '../src/sunucu/index.js';
 
@@ -19,6 +19,7 @@ const TOKEN = 'test-token';
 const ORIGIN = 'http://127.0.0.1:3000';
 
 let kok: string;
+let p: Proje;
 let uygulama: ReturnType<typeof sunucuOlustur>;
 
 beforeEach(() => {
@@ -27,11 +28,9 @@ beforeEach(() => {
   mkdirSync(web, { recursive: true });
   writeFileSync(join(web, 'index.html'), '<h1>x</h1>', 'utf-8');
 
-  const depo = new ProjeDepo(kok);
-  depo.yaz({
-    ...varsayilanProje(join(kok, 'cikti')),
-    satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }],
-  });
+  const depo = new ProjelerDepo(kok, join(kok, 'cikti'));
+  p = depo.olustur('Kedi');
+  depo.yaz({ ...p, satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }] });
 
   uygulama = sunucuOlustur({
     depo,
@@ -41,7 +40,6 @@ beforeEach(() => {
     tarayiciAcikMi: () => true,
     token: TOKEN,
     izinliOrigin: () => ORIGIN,
-    ciktiKoku: join(kok, 'cikti'),
     webKlasoru: web,
     klasoruAc: () => {},
   });
@@ -61,12 +59,10 @@ const tarayiciBasliklari = () => ({
 
 describe('gövdesiz POST + content-type: application/json (tarayıcı davranışı)', () => {
   const GOVDESIZ_ROTALAR = [
-    '/api/is/baslat',
     '/api/is/duraklat',
     '/api/is/devam',
     '/api/is/durdur',
     '/api/is/kullanici-hazir',
-    '/api/klasoru-ac',
   ];
 
   for (const yol of GOVDESIZ_ROTALAR) {
@@ -81,10 +77,30 @@ describe('gövdesiz POST + content-type: application/json (tarayıcı davranış
     });
   }
 
+  it('/api/projeler/:id/klasoru-ac boş gövdeyi 400 ile reddetmez', async () => {
+    const yanit = await uygulama.inject({
+      method: 'POST',
+      url: `/api/projeler/${p.id}/klasoru-ac`,
+      headers: tarayiciBasliklari(),
+    });
+    expect(yanit.statusCode).not.toBe(400);
+    expect(yanit.statusCode).toBeLessThan(400);
+  });
+
+  it('/api/is/baslat gövdesiz çağrıda projeId gerekli der', async () => {
+    const yanit = await uygulama.inject({
+      method: 'POST',
+      url: '/api/is/baslat',
+      headers: tarayiciBasliklari(),
+    });
+    expect(yanit.statusCode).toBe(400);
+    expect(yanit.json().hata).toMatch(/projeId/);
+  });
+
   it('gövdeli POST hâlâ normal ayrıştırılır', async () => {
     const yanit = await uygulama.inject({
       method: 'POST',
-      url: '/api/proje/onizleme',
+      url: `/api/projeler/${p.id}/onizleme`,
       headers: tarayiciBasliklari(),
       payload: JSON.stringify({
         basePrompt: 'Bir kedi, {VARYASYON}',
@@ -98,17 +114,17 @@ describe('gövdesiz POST + content-type: application/json (tarayıcı davranış
   it('bozuk JSON gövdesi hâlâ 400 ile reddedilir', async () => {
     const yanit = await uygulama.inject({
       method: 'POST',
-      url: '/api/proje/onizleme',
+      url: `/api/projeler/${p.id}/onizleme`,
       headers: tarayiciBasliklari(),
       payload: '{ bozuk json',
     });
     expect(yanit.statusCode).toBe(400);
   });
 
-  it('PUT /api/proje boş gövdeyle 400 döner (gerçekten gövde gerekiyor)', async () => {
+  it('PUT /api/projeler/:id boş gövdeyle 400 döner (gerçekten gövde gerekiyor)', async () => {
     const yanit = await uygulama.inject({
       method: 'PUT',
-      url: '/api/proje',
+      url: `/api/projeler/${p.id}`,
       headers: tarayiciBasliklari(),
     });
     // Boş gövde geçerli proje değil; doğrulama hatası beklenir, ayrıştırma çökmesi değil

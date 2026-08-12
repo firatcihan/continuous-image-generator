@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ProjeDepo, projedenConfig, type Proje } from './depo/projeDepo.js';
+import { ProjelerDepo, projedenConfig, type Proje } from './depo/projeler.js';
 import { VARSAYILAN_CIKTI_KOKU, VARSAYILAN_VERI_KOKU, chromeProfilYolu } from './depo/yollar.js';
 import { basarisizKaydet, tamamlandiMi } from './durum.js';
 import { IsYoneticisi } from './is/isYoneticisi.js';
@@ -19,7 +19,8 @@ async function main(): Promise<void> {
   mkdirSync(veriKoku, { recursive: true });
 
   const token = tokenUret();
-  const depo = new ProjeDepo(veriKoku);
+  const depo = new ProjelerDepo(veriKoku, ciktiKoku);
+  depo.gocEt();
   const isYoneticisi = new IsYoneticisi();
   const logger = new Logger(join(veriKoku, 'calisma.log'));
   const profil = chromeProfilYolu(veriKoku);
@@ -52,7 +53,7 @@ async function main(): Promise<void> {
         await tarayiciAc();
         if (!tarayici) throw new Error('tarayıcı açılamadı');
         const ozet = await isYoneticisi.baslat({
-          projeId: proje.ad,
+          projeId: proje.id,
           config: projedenConfig(proje, profil),
           satirlar: proje.satirlar,
           tarayici,
@@ -87,7 +88,7 @@ async function main(): Promise<void> {
     tarayiciAc,
     tarayiciAcikMi: () => tarayici !== null,
     izinliOrigin: () => adres,
-    ciktiKoku, webKlasoru: web, klasoruAc,
+    webKlasoru: web, klasoruAc,
   });
 
   await uygulama.listen({ port: Number(process.env.PORT ?? 0), host: '127.0.0.1' });

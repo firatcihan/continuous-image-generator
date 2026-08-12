@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProjeDepo, varsayilanProje } from '../src/depo/projeDepo.js';
+import { ProjelerDepo, type Proje } from '../src/depo/projeler.js';
 import { IsYoneticisi } from '../src/is/isYoneticisi.js';
 import { sunucuOlustur } from '../src/sunucu/index.js';
 
@@ -11,6 +11,8 @@ const ORIGIN = 'http://127.0.0.1:3000';
 const yetkili = () => ({ 'x-token': TOKEN, origin: ORIGIN });
 
 let kok: string;
+let depo: ProjelerDepo;
+let p: Proje;
 let uygulama: ReturnType<typeof sunucuOlustur>;
 let baslatilanProjeler: string[];
 let isYoneticisi: IsYoneticisi;
@@ -24,11 +26,9 @@ beforeEach(() => {
   baslatilanProjeler = [];
   isYoneticisi = new IsYoneticisi();
 
-  const depo = new ProjeDepo(kok);
-  depo.yaz({
-    ...varsayilanProje(join(kok, 'cikti')),
-    satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }],
-  });
+  depo = new ProjelerDepo(kok, join(kok, 'cikti'));
+  p = depo.olustur('Kedi');
+  depo.yaz({ ...p, satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }] });
 
   uygulama = sunucuOlustur({
     depo,
@@ -38,7 +38,6 @@ beforeEach(() => {
     tarayiciAcikMi: () => true,
     token: TOKEN,
     izinliOrigin: () => ORIGIN,
-    ciktiKoku: join(kok, 'cikti'),
     webKlasoru: web,
     klasoruAc: () => {},
   });
@@ -59,26 +58,32 @@ describe('GET /api/is', () => {
 
 describe('POST /api/is/baslat', () => {
   it('projeyi okur ve isBaslat geri çağrısını tetikler', async () => {
-    const y = await uygulama.inject({ method: 'POST', url: '/api/is/baslat', headers: yetkili() });
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/is/baslat', headers: yetkili(), payload: { projeId: p.id },
+    });
     expect(y.statusCode).toBe(202);
     expect(baslatilanProjeler).toHaveLength(1);
   });
 
   it('satır listesi boşsa 400 döner ve iş başlatmaz', async () => {
-    new ProjeDepo(kok).yaz({ ...varsayilanProje(join(kok, 'cikti')), satirlar: [] });
-    const y = await uygulama.inject({ method: 'POST', url: '/api/is/baslat', headers: yetkili() });
+    depo.yaz({ ...p, satirlar: [] });
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/is/baslat', headers: yetkili(), payload: { projeId: p.id },
+    });
     expect(y.statusCode).toBe(400);
     expect(y.json().hata).toMatch(/satır/i);
     expect(baslatilanProjeler).toHaveLength(0);
   });
 
   it('base promptta yer tutucu yoksa 400 döner ve iş başlatmaz', async () => {
-    new ProjeDepo(kok).yaz({
-      ...varsayilanProje(join(kok, 'cikti')),
+    depo.yaz({
+      ...p,
       basePrompt: 'Bir kedi',
       satirlar: [{ metin: 'karda', dosyaAdi: 'a' }],
     });
-    const y = await uygulama.inject({ method: 'POST', url: '/api/is/baslat', headers: yetkili() });
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/is/baslat', headers: yetkili(), payload: { projeId: p.id },
+    });
     expect(y.statusCode).toBe(400);
     expect(y.json().hata).toMatch(/VARYASYON/);
     expect(baslatilanProjeler).toHaveLength(0);

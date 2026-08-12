@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import type { Satir } from './tipler.js';
 
 /** Tırnaklı alan ve CRLF destekli mini CSV ayrıştırıcı. */
@@ -52,27 +51,37 @@ export function dosyaAdiTemizle(ad: string): string {
     .trim();
 }
 
-export function listeYukle(yol: string): Satir[] {
-  const ham = csvAyristir(readFileSync(yol, 'utf-8'));
-  if (ham.length === 0) throw new Error(`liste dosyası boş: ${yol}`);
+/**
+ * `metin,dosya_adi` CSV metnini satırlara çevirir. Başlık satırı isteğe
+ * bağlı: varsa sütun sırası başlıktan okunur, yoksa ilk alan metin, ikinci
+ * alan dosya adı sayılır.
+ *
+ * Hata mesajlarındaki satır numarası kullanıcının gördüğü CSV satırıdır
+ * (başlık dahil, 1'den başlar).
+ */
+export function satirlariAyristir(icerik: string): Satir[] {
+  const ham = csvAyristir(icerik);
+  if (ham.length === 0) return [];
 
   const baslik = ham[0].map((sutun) => sutun.trim().toLowerCase());
-  const metinIdx = baslik.indexOf('metin');
-  const dosyaIdx = baslik.indexOf('dosya_adi');
-  if (metinIdx === -1 || dosyaIdx === -1) {
-    throw new Error('liste.csv başlığı "metin,dosya_adi" sütunlarını içermeli');
-  }
+  const basliklidir = baslik.includes('metin') && baslik.includes('dosya_adi');
+
+  const metinIdx = basliklidir ? baslik.indexOf('metin') : 0;
+  const dosyaIdx = basliklidir ? baslik.indexOf('dosya_adi') : 1;
+  const ilkVeri = basliklidir ? 1 : 0;
 
   const satirlar: Satir[] = [];
   const gorulenAdlar = new Set<string>();
-  for (let i = 1; i < ham.length; i++) {
+
+  for (let i = ilkVeri; i < ham.length; i++) {
     const metin = (ham[i][metinIdx] ?? '').trim();
     const dosyaAdi = dosyaAdiTemizle(ham[i][dosyaIdx] ?? '');
+
     if (metin === '' || dosyaAdi === '') {
-      throw new Error(`liste.csv ${i + 1}. satır: "metin" ve "dosya_adi" boş olamaz`);
+      throw new Error(`${i + 1}. satır: "metin" ve "dosya_adi" boş olamaz`);
     }
     if (gorulenAdlar.has(dosyaAdi)) {
-      throw new Error(`liste.csv ${i + 1}. satır: "${dosyaAdi}" dosya adı tekrar ediyor`);
+      throw new Error(`${i + 1}. satır: "${dosyaAdi}" dosya adı tekrar ediyor`);
     }
     gorulenAdlar.add(dosyaAdi);
     satirlar.push({ metin, dosyaAdi });

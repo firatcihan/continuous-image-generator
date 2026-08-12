@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ProjeDepo, varsayilanProje } from '../src/depo/projeDepo.js';
+import { ProjelerDepo, type Proje } from '../src/depo/projeler.js';
 import { IsYoneticisi } from '../src/is/isYoneticisi.js';
 import { sunucuOlustur } from '../src/sunucu/index.js';
 import { klasorKomutu, urlKomutu } from '../src/sunucu/klasor.js';
@@ -18,25 +18,24 @@ const PNG = Buffer.from(
 );
 
 let kok: string;
-let ciktiKlasoru: string;
+let p: Proje;
 let acilanYollar: string[];
 let uygulama: ReturnType<typeof sunucuOlustur>;
 
 beforeEach(() => {
   kok = mkdtempSync(join(tmpdir(), 'galeri-test-'));
-  ciktiKlasoru = join(kok, 'cikti', 'proje');
-  mkdirSync(ciktiKlasoru, { recursive: true });
   const web = join(kok, 'web');
   mkdirSync(web, { recursive: true });
   writeFileSync(join(web, 'index.html'), '<h1>x</h1>', 'utf-8');
 
-  writeFileSync(join(ciktiKlasoru, 'kedi_kar.png'), PNG);
-  writeFileSync(join(ciktiKlasoru, 'kedi_plaj.png'), PNG);
-  writeFileSync(join(ciktiKlasoru, 'notlar.txt'), 'png değil', 'utf-8');
-  writeFileSync(join(kok, 'gizli.png'), PNG);
+  const depo = new ProjelerDepo(kok, join(kok, 'cikti'));
+  p = depo.olustur('Kedi');
+  mkdirSync(p.ciktiKlasoru, { recursive: true });
 
-  const depo = new ProjeDepo(kok);
-  depo.yaz({ ...varsayilanProje(join(kok, 'cikti')), ciktiKlasoru });
+  writeFileSync(join(p.ciktiKlasoru, 'kedi_kar.png'), PNG);
+  writeFileSync(join(p.ciktiKlasoru, 'kedi_plaj.png'), PNG);
+  writeFileSync(join(p.ciktiKlasoru, 'notlar.txt'), 'png değil', 'utf-8');
+  writeFileSync(join(kok, 'gizli.png'), PNG);
 
   acilanYollar = [];
   uygulama = sunucuOlustur({
@@ -47,7 +46,6 @@ beforeEach(() => {
     tarayiciAcikMi: () => true,
     token: TOKEN,
     izinliOrigin: () => ORIGIN,
-    ciktiKoku: join(kok, 'cikti'),
     webKlasoru: web,
     klasoruAc: (yol) => acilanYollar.push(yol),
   });
@@ -92,26 +90,37 @@ describe('urlKomutu', () => {
   });
 });
 
-describe('GET /api/galeri', () => {
+describe('GET /api/projeler/:id/galeri', () => {
   it('yalnızca png dosyalarını sıralı listeler', async () => {
-    const y = await uygulama.inject({ method: 'GET', url: '/api/galeri', headers: yetkili() });
+    const y = await uygulama.inject({
+      method: 'GET', url: `/api/projeler/${p.id}/galeri`, headers: yetkili(),
+    });
     expect(y.statusCode).toBe(200);
     expect(y.json().dosyalar).toEqual(['kedi_kar.png', 'kedi_plaj.png']);
   });
 
   it('çıktı klasörü yoksa boş liste döner', async () => {
-    rmSync(ciktiKlasoru, { recursive: true, force: true });
-    const y = await uygulama.inject({ method: 'GET', url: '/api/galeri', headers: yetkili() });
+    rmSync(p.ciktiKlasoru, { recursive: true, force: true });
+    const y = await uygulama.inject({
+      method: 'GET', url: `/api/projeler/${p.id}/galeri`, headers: yetkili(),
+    });
     expect(y.statusCode).toBe(200);
     expect(y.json().dosyalar).toEqual([]);
   });
+
+  it('toplamBayt dosya boyutları toplamını döner', async () => {
+    const y = await uygulama.inject({
+      method: 'GET', url: `/api/projeler/${p.id}/galeri`, headers: yetkili(),
+    });
+    expect(y.json().toplamBayt).toBe(PNG.length * 2);
+  });
 });
 
-describe('GET /api/gorsel/:ad', () => {
+describe('GET /api/projeler/:id/gorsel/:ad', () => {
   it('png dosyasını doğru content-type ile servis eder', async () => {
     const y = await uygulama.inject({
       method: 'GET',
-      url: '/api/gorsel/kedi_kar.png',
+      url: `/api/projeler/${p.id}/gorsel/kedi_kar.png`,
       headers: yetkili(),
     });
     expect(y.statusCode).toBe(200);
@@ -122,7 +131,7 @@ describe('GET /api/gorsel/:ad', () => {
   it('olmayan dosya için 404 döner', async () => {
     const y = await uygulama.inject({
       method: 'GET',
-      url: '/api/gorsel/yok.png',
+      url: `/api/projeler/${p.id}/gorsel/yok.png`,
       headers: yetkili(),
     });
     expect(y.statusCode).toBe(404);
@@ -131,7 +140,7 @@ describe('GET /api/gorsel/:ad', () => {
   it('png olmayan dosyayı reddeder', async () => {
     const y = await uygulama.inject({
       method: 'GET',
-      url: '/api/gorsel/notlar.txt',
+      url: `/api/projeler/${p.id}/gorsel/notlar.txt`,
       headers: yetkili(),
     });
     expect(y.statusCode).toBe(400);
@@ -140,7 +149,7 @@ describe('GET /api/gorsel/:ad', () => {
   it('path traversal ile klasör dışına çıkmayı reddeder', async () => {
     const y = await uygulama.inject({
       method: 'GET',
-      url: '/api/gorsel/..%2Fgizli.png',
+      url: `/api/projeler/${p.id}/gorsel/..%2Fgizli.png`,
       headers: yetkili(),
     });
     expect([400, 404]).toContain(y.statusCode);
@@ -148,24 +157,24 @@ describe('GET /api/gorsel/:ad', () => {
 
   it('çıktı klasöründeki symlink ile dışarı sızdırmayı reddeder', async () => {
     // Sözdizimsel kontrolü geçen ama gerçekte kök dışını gösteren bağlantı
-    symlinkSync(join(kok, 'gizli.png'), join(ciktiKlasoru, 'tuzak.png'));
+    symlinkSync(join(kok, 'gizli.png'), join(p.ciktiKlasoru, 'tuzak.png'));
     const y = await uygulama.inject({
       method: 'GET',
-      url: '/api/gorsel/tuzak.png',
+      url: `/api/projeler/${p.id}/gorsel/tuzak.png`,
       headers: yetkili(),
     });
     expect(y.statusCode).toBe(404);
   });
 });
 
-describe('POST /api/klasoru-ac', () => {
+describe('POST /api/projeler/:id/klasoru-ac', () => {
   it('projenin çıktı klasörünü açar', async () => {
     const y = await uygulama.inject({
       method: 'POST',
-      url: '/api/klasoru-ac',
+      url: `/api/projeler/${p.id}/klasoru-ac`,
       headers: yetkili(),
     });
     expect(y.statusCode).toBe(200);
-    expect(acilanYollar).toEqual([ciktiKlasoru]);
+    expect(acilanYollar).toEqual([p.ciktiKlasoru]);
   });
 });

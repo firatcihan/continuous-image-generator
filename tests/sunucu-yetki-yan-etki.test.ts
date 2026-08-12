@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ProjeDepo, varsayilanProje } from '../src/depo/projeDepo.js';
+import { ProjelerDepo, type Proje } from '../src/depo/projeler.js';
 import { IsYoneticisi } from '../src/is/isYoneticisi.js';
 import { sunucuOlustur } from '../src/sunucu/index.js';
 
@@ -17,6 +17,7 @@ const TOKEN = 'test-token';
 const ORIGIN = 'http://127.0.0.1:3000';
 
 let kok: string;
+let p: Proje;
 let uygulama: ReturnType<typeof sunucuOlustur>;
 let yanEtkiler: string[];
 
@@ -28,12 +29,9 @@ beforeEach(() => {
 
   yanEtkiler = [];
 
-  const depo = new ProjeDepo(kok);
-  depo.yaz({
-    ...varsayilanProje(join(kok, 'cikti')),
-    ad: 'Korunan proje',
-    satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }],
-  });
+  const depo = new ProjelerDepo(kok, join(kok, 'cikti'));
+  p = depo.olustur('Korunan proje');
+  depo.yaz({ ...p, satirlar: [{ metin: 'karda', dosyaAdi: 'kedi_kar' }] });
 
   uygulama = sunucuOlustur({
     depo,
@@ -45,7 +43,6 @@ beforeEach(() => {
     tarayiciAcikMi: () => true,
     token: TOKEN,
     izinliOrigin: () => ORIGIN,
-    ciktiKoku: join(kok, 'cikti'),
     webKlasoru: web,
     klasoruAc: () => yanEtkiler.push('klasor-acildi'),
   });
@@ -72,25 +69,29 @@ describe('yetkisiz istek yan etki üretmemeli', () => {
     expect(yanEtkiler).toEqual([]);
   });
 
-  it('POST /api/klasoru-ac klasör açmaz', async () => {
-    const y = await uygulama.inject({ method: 'POST', url: '/api/klasoru-ac', headers: yetkisiz() });
+  it('POST /api/projeler/:id/klasoru-ac klasör açmaz', async () => {
+    const y = await uygulama.inject({
+      method: 'POST', url: `/api/projeler/${p.id}/klasoru-ac`, headers: yetkisiz(),
+    });
     expect(y.statusCode).toBe(401);
     expect(yanEtkiler).toEqual([]);
   });
 
-  it('PUT /api/proje projeyi DEĞİŞTİRMEZ', async () => {
+  it('PUT /api/projeler/:id projeyi DEĞİŞTİRMEZ', async () => {
     const y = await uygulama.inject({
       method: 'PUT',
-      url: '/api/proje',
+      url: `/api/projeler/${p.id}`,
       headers: { ...yetkisiz(), 'content-type': 'application/json' },
-      payload: JSON.stringify({ ...varsayilanProje(join(kok, 'cikti')), ad: 'SALDIRGAN' }),
+      payload: JSON.stringify({ ...p, ad: 'SALDIRGAN' }),
     });
     expect(y.statusCode).toBe(401);
-    expect(new ProjeDepo(kok).oku(join(kok, 'cikti')).ad).toBe('Korunan proje');
+    expect(new ProjelerDepo(kok, join(kok, 'cikti')).oku(p.id)?.ad).toBe('Korunan proje');
   });
 
   it('yetkisiz istek 401 gövdesi döndürür, rota gövdesi değil', async () => {
-    const y = await uygulama.inject({ method: 'GET', url: '/api/proje', headers: yetkisiz() });
+    const y = await uygulama.inject({
+      method: 'GET', url: `/api/projeler/${p.id}`, headers: yetkisiz(),
+    });
     expect(y.statusCode).toBe(401);
     expect(y.json()).toEqual({ hata: 'yetkisiz istek' });
   });
