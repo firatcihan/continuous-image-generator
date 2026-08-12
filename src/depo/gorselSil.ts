@@ -1,8 +1,8 @@
 import {
-  existsSync, readdirSync, rmSync, rmdirSync, statSync,
+  existsSync, readdirSync, rmSync, rmdirSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { icerdeMi } from './yollar.js';
+import { ayniKlasorMu, icerdeMi } from './yollar.js';
 
 /** Silme işlemleri (test enjeksiyonu için). */
 export interface SilmeIslemleri {
@@ -20,26 +20,6 @@ const varsayilanIslemler: SilmeIslemleri = {
   dosyaSil: (yol) => rmSync(yol),
   klasorSil: (yol) => rmdirSync(yol),
 };
-
-/**
- * İki yolun aynı klasörü gösterip göstermediği. Yol metnini karşılaştırmak
- * yetmez: büyük/küçük harfe duyarsız dosya sistemlerinde (macOS varsayılanı)
- * /Users/x ile /users/x aynı klasördür ama metin olarak eşit değildir.
- * realpath da bunu düzeltmiyor — realpath sembolik bağları çözer, harf
- * kasasını normalize etmez. Bu yüzden dosya sisteminin kimliğini (aygıt +
- * inode) soruyoruz. `korumaliKokler` girdisi diskte yoksa hedef klasör
- * olamayacağı için hata yutuluyor.
- */
-function ayniKlasorMu(a: string, b: string): boolean {
-  if (resolve(a) === resolve(b)) return true;
-  try {
-    const x = statSync(a);
-    const y = statSync(b);
-    return x.dev === y.dev && x.ino === y.ino;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Bir projenin çıktı klasöründeki görselleri siler.

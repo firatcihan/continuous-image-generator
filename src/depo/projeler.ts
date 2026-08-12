@@ -1,14 +1,16 @@
 import {
-  existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync,
+  existsSync, readFileSync, readdirSync, renameSync, rmSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { dosyaAdiTemizle } from '../liste.js';
 import type { Config, Satir } from '../tipler.js';
 import { atomikYaz } from './atomik.js';
 import { klasorGorselleriniSil } from './gorselSil.js';
 import { idGecerliMi, idUret, slugla } from './kimlik.js';
-import { eskiProjeYolu, projeDosyaYolu, projelerKlasoru } from './yollar.js';
+import {
+  ayniKlasorMu, eskiProjeYolu, projeDosyaYolu, projelerKlasoru,
+} from './yollar.js';
 
 export interface Ayarlar {
   modelAdi: string;
@@ -197,29 +199,6 @@ function benzersizYedekYolu(yol: string, son: string): string {
   return `${taban}-${sayac}`;
 }
 
-/**
- * İki yolun aynı klasörü gösterip göstermediği. Yol metnini (resolve sonrası)
- * karşılaştırmak yetmez: büyük/küçük harfe duyarsız dosya sistemlerinde
- * (macOS ve Windows varsayılanı) `.../Kedi` ile `.../kedi` aynı klasördür ama
- * metin olarak eşit değildir — `klasorSahibi` sadece metin karşılaştırsaydı
- * kullanıcının elle girdiği, sadece harf kasası farklı iki `ciktiKlasoru`
- * aynı gerçek klasöre çakışabilir ve devam mantığı satırları yanlış
- * "bitti" sayardı. `gorselSil.ts`'teki aynı adlı yardımcıyla aynı mantık;
- * dosya sistemi kimliğine (aygıt + inode) bakılıyor. Klasörlerden biri
- * diskte yoksa (henüz üretim başlamamış proje) hata yutuluyor — o durumda
- * zaten çakışacak bir şey yoktur.
- */
-function ayniKlasorMu(a: string, b: string): boolean {
-  if (resolve(a) === resolve(b)) return true;
-  try {
-    const x = statSync(a);
-    const y = statSync(b);
-    return x.dev === y.dev && x.ino === y.ino;
-  } catch {
-    return false;
-  }
-}
-
 export class ProjelerDepo {
   constructor(
     private veriKoku: string,
@@ -376,7 +355,7 @@ export class ProjelerDepo {
    * Aynı çıktı klasörünü kullanan başka bir proje varsa adını döner.
    * Devam mantığı "PNG diskte varsa satırı atla" olduğu için klasör paylaşan
    * iki proje birbirinin satırlarını bitmiş sayardı. Karşılaştırma
-   * `ayniKlasorMu` ile yapılır (bkz. yukarısı) — salt metin eşitliği,
+   * `./yollar.js`'teki `ayniKlasorMu` ile yapılır — salt metin eşitliği,
    * harf kasasına duyarsız dosya sistemlerinde bu çakışmayı kaçırırdı.
    */
   private klasorSahibi(klasor: string, hariçId: string): string | null {

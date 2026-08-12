@@ -145,6 +145,32 @@ describe('ProjelerDepo — yazma', () => {
   });
 });
 
+describe('ProjelerDepo — güncelleme', () => {
+  it('gövdedeki id yoksayılır, parametredeki id kazanır', () => {
+    const bir = depo.olustur('Kedi');
+    const iki = depo.olustur('Plaj');
+
+    depo.guncelle(iki.id, { ...(depo.oku(iki.id) as Proje), id: bir.id, ad: 'Değişti' });
+
+    expect(depo.oku(iki.id)?.ad).toBe('Değişti');
+    expect(depo.oku(bir.id)?.ad).toBe('Kedi');
+  });
+
+  it('doğrulama hatası olan gövdeyi reddeder', () => {
+    const p = depo.olustur('Kedi');
+    expect(() => depo.guncelle(p.id, { ...(depo.oku(p.id) as Proje), ciktiKlasoru: '   ' }))
+      .toThrow(/ciktiKlasoru/);
+  });
+
+  it('başka bir projenin çıktı klasörünü kullanan gövdeyi reddeder', () => {
+    const bir = depo.olustur('Kedi');
+    const iki = depo.olustur('Plaj');
+
+    expect(() => depo.guncelle(iki.id, { ...(depo.oku(iki.id) as Proje), ciktiKlasoru: bir.ciktiKlasoru }))
+      .toThrow(/Kedi/);
+  });
+});
+
 describe('ProjelerDepo — bozuk dosya', () => {
   it('bozuk dosyayı .bozuk olarak taşır, listede bozukSayisi olarak bildirir', () => {
     const hataSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
