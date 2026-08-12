@@ -35,6 +35,26 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
   const uygulama = Fastify({ logger: false });
   uygulama.decorate('testIsYoneticisi', b.isYoneticisi);
 
+  // Beklenmeyen hata: gövde her rotayla aynı şekli taşımalı ({ hata }), yoksa
+  // UI hatayı okuyamaz ve kullanıcı boş bir kutu görür. ciktiKlasoru
+  // kullanıcıdan gelen serbest bir yol olduğu için bu yol gerçekten
+  // erişilebilir (dosyayı klasör sanmak → ENOTDIR, izin yok → EACCES).
+  //
+  // `statusCode < 500` dalı yalnızca aşağıdaki `addContentTypeParser`'ın
+  // kendi fırlattığı, mesajı bizim yazdığımız (bozuk JSON) hatayı korumak
+  // için var — o hata zaten güvenli bir mesaj taşıyor ve 400 olarak
+  // kalmalı. `statusCode`'u olmayan (ör. fs çağrılarından gelen ENOTDIR/
+  // EACCES) her şey burada "beklenmeyen" sayılır: ayrıntı yalnızca sunucu
+  // konsoluna gider, çünkü fs hata mesajları mutlak yol içerebilir.
+  uygulama.setErrorHandler((hata, istek, yanit) => {
+    const bilinenHata = hata as Error & { statusCode?: number };
+    if (typeof bilinenHata.statusCode === 'number' && bilinenHata.statusCode < 500) {
+      return yanit.code(bilinenHata.statusCode).send({ hata: bilinenHata.message });
+    }
+    console.error(`${istek.method} ${istek.url} beklenmeyen hata:`, hata);
+    return yanit.code(500).send({ hata: 'beklenmeyen sunucu hatası' });
+  });
+
   /** Projeyi okur; yoksa 404 gönderir ve null döner. */
   const projeVeya404 = (id: string, yanit: FastifyReply): Proje | null => {
     const proje = idGecerliMi(id) ? b.depo.oku(id) : null;

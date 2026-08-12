@@ -53,4 +53,10 @@ describe('satirlariAyristir', () => {
   it('boş metin için boş liste döner', () => {
     expect(satirlariAyristir('')).toEqual([]);
   });
+
+  it('yazım hatalı başlığı (yalnızca biri eşleşen) veri saymaz, hata fırlatır', () => {
+    expect(() => satirlariAyristir('metin,dosyaadi\nkarda,a\n')).toThrow(
+      'metin,dosya_adi',
+    );
+  });
 });

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -39,6 +39,15 @@ afterEach(async () => {
 });
 
 const yetkili = (ek: Record<string, string> = {}) => ({ 'x-token': TOKEN, origin: ORIGIN, ...ek });
+
+describe('GET /', () => {
+  it('web klasöründeki index.html dosyasını servis eder', async () => {
+    const y = await uygulama.inject({ method: 'GET', url: `/?t=${TOKEN}` });
+    expect(y.statusCode).toBe(200);
+    expect(y.headers['content-type']).toContain('text/html');
+    expect(y.body).toContain('merhaba');
+  });
+});
 
 describe('GET /api/projeler', () => {
   it('proje yoksa boş liste döner', async () => {
@@ -90,7 +99,7 @@ describe('GET /api/projeler/:id', () => {
     expect(y.statusCode).toBe(404);
   });
 
-  it('geçersiz id için 404 döner, dosya sistemine dokunmaz', async () => {
+  it('geçersiz id için 404 döner', async () => {
     const y = await uygulama.inject({
       method: 'GET', url: '/api/projeler/BUYUK.HARF', headers: yetkili(),
     });
@@ -165,6 +174,7 @@ describe('DELETE /api/projeler/:id', () => {
     expect(y.statusCode).toBe(200);
     expect(y.json().silinen).toBe(0);
     expect(depo.oku(p.id)).toBeNull();
+    expect(existsSync(join(p.ciktiKlasoru, 'a.png'))).toBe(true);
   });
 
   it('gorselleriSil=1 ile görselleri de siler', async () => {
@@ -368,5 +378,28 @@ describe('POST /api/csv/ayristir', () => {
       method: 'POST', url: '/api/csv/ayristir', headers: yetkili(), payload: {},
     });
     expect(y.statusCode).toBe(400);
+  });
+});
+
+describe('beklenmeyen dosya sistemi hatası', () => {
+  it('ciktiKlasoru bir dosyayı gösteriyorsa 500 ve { hata } gövdesiyle döner', async () => {
+    const p = depo.olustur('Kedi');
+    const dosyaYolu = join(kok, 'bu-bir-klasor-degil');
+    writeFileSync(dosyaYolu, 'x');
+
+    const put = await uygulama.inject({
+      method: 'PUT', url: `/api/projeler/${p.id}`, headers: yetkili(),
+      payload: { ...p, ciktiKlasoru: dosyaYolu },
+    });
+    expect(put.statusCode).toBe(200);
+
+    // readdirSync bir dosyaya karşı ENOTDIR fırlatır — hiçbir rota bunu
+    // yakalamıyor, global setErrorHandler'a düşmesi gerekiyor.
+    const y = await uygulama.inject({
+      method: 'GET', url: `/api/projeler/${p.id}/galeri`, headers: yetkili(),
+    });
+    expect(y.statusCode).toBe(500);
+    expect(typeof y.json().hata).toBe('string');
+    expect(y.json().hata.length).toBeGreaterThan(0);
   });
 });

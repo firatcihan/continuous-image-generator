@@ -64,7 +64,15 @@ export function satirlariAyristir(icerik: string): Satir[] {
   if (ham.length === 0) return [];
 
   const baslik = ham[0].map((sutun) => sutun.trim().toLowerCase());
-  const basliklidir = baslik.includes('metin') && baslik.includes('dosya_adi');
+  const metinVar = baslik.includes('metin');
+  const dosyaAdiVar = baslik.includes('dosya_adi');
+  // Yalnızca biri varsa yazım hatası ("dosyaadi" gibi) demektir — ilk satırı
+  // sessizce veri sayıp kullanıcıya bozuk bir ilk satır göstermek yerine,
+  // eksik sütunu açıkça bildir.
+  if (metinVar !== dosyaAdiVar) {
+    throw new Error('başlık satırı "metin,dosya_adi" sütunlarını içermeli');
+  }
+  const basliklidir = metinVar && dosyaAdiVar;
 
   const metinIdx = basliklidir ? baslik.indexOf('metin') : 0;
   const dosyaIdx = basliklidir ? baslik.indexOf('dosya_adi') : 1;

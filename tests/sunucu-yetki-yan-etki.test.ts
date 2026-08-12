@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -94,5 +94,20 @@ describe('yetkisiz istek yan etki üretmemeli', () => {
     });
     expect(y.statusCode).toBe(401);
     expect(y.json()).toEqual({ hata: 'yetkisiz istek' });
+  });
+
+  it('DELETE /api/projeler/:id ne kaydı ne görselleri siler', async () => {
+    mkdirSync(p.ciktiKlasoru, { recursive: true });
+    writeFileSync(join(p.ciktiKlasoru, 'kedi_kar.png'), 'x');
+
+    const y = await uygulama.inject({
+      method: 'DELETE',
+      url: `/api/projeler/${p.id}?gorselleriSil=1`,
+      headers: yetkisiz(),
+    });
+
+    expect(y.statusCode).toBe(401);
+    expect(new ProjelerDepo(kok, join(kok, 'cikti')).oku(p.id)).not.toBeNull();
+    expect(existsSync(join(p.ciktiKlasoru, 'kedi_kar.png'))).toBe(true);
   });
 });
