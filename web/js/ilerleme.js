@@ -25,6 +25,18 @@ const DURUM_METINLERI = {
  */
 let tarayiciAciliyor = false;
 
+/**
+ * Durdur'a basıldı ama iş henüz durmadı.
+ *
+ * `durdur()` yalnızca AbortController'ı tetikliyor; worker bunu ancak SIRADAKİ
+ * KONTROL NOKTASINDA görüyor ve o an bir Playwright beklemesinin içinde
+ * olabiliyor (canlı ölçümde ~30 sn'lik bir `waitForSelector`; üretimde
+ * `uretimZamanAsimiSn` kadar). Bu arada durum hâlâ 'calisiyor' geldiği için
+ * ekranda HİÇBİR ŞEY değişmiyordu — kullanıcı butonun çalışmadığını sanıyor ve
+ * tekrar tıklıyor. Bayrak, iş gerçekten durana kadar bunu söylüyor.
+ */
+let durdurmaBekliyor = false;
+
 export function kayitEkle(metin) {
   const satir = document.createElement('div');
   satir.textContent = `${new Date().toLocaleTimeString('tr-TR')} ${metin}`;
@@ -60,6 +72,8 @@ export async function isDurumunuTazele() {
 export function ilerlemeyiCiz() {
   const proje = durum.aktifProje;
   const is = durum.is;
+  // İş gerçekten durdu (ya da başka bir sebeple bitti): bekleme bitti
+  if (durdurmaBekliyor && !isMesgulMu()) durdurmaBekliyor = false;
   const calisiyor = proje !== null && projeCalisiyorMu(proje.id);
   // İş BİTMİŞ olsa da (bitti/durduruldu/hata) sayılar bu projeye ait: son
   // özeti yalnızca kayıt akışında bırakmak kullanıcıyı geçmişi kaydırmaya
@@ -89,6 +103,14 @@ export function ilerlemeyiCiz() {
     sayac.textContent =
       `${is.sira}/${is.toplam} · ✓ ${is.ozet.basarili} · atlanan ${is.ozet.atlanan} · ✗ ${is.ozet.basarisiz}`;
     kap.append(sayac);
+
+    if (durdurmaBekliyor) {
+      const bekleme = document.createElement('p');
+      bekleme.className = 'uyari-metin';
+      bekleme.textContent =
+        'Durduruluyor — sıradaki kontrol noktasında bitecek (görsel beklemesi sürebilir).';
+      kap.append(bekleme);
+    }
 
     if (calisiyor && is.durum === 'limitBekliyor' && is.kalanSn !== null) {
       const geri = document.createElement('p');
@@ -126,7 +148,7 @@ function butonlariCiz() {
 
   $('btnDuraklat').disabled = !buProje || durum.is.durum === 'duraklatildi';
   $('btnDevam').disabled = !buProje || durum.is.durum !== 'duraklatildi';
-  $('btnDurdur').disabled = !buProje;
+  $('btnDurdur').disabled = !buProje || durdurmaBekliyor;
 }
 
 function seridiCiz() {
@@ -190,10 +212,21 @@ export function ilerlemeyiBagla() {
     }
   });
 
+  $('btnDurdur').addEventListener('click', async () => {
+    durdurmaBekliyor = true;
+    ilerlemeyiCiz(); // "Durduruluyor…" hemen görünsün, sunucu yanıtı beklenmeden
+    try {
+      await api.isDurdur();
+    } catch (hata) {
+      durdurmaBekliyor = false;
+      kayitEkle(hata.message);
+      ilerlemeyiCiz();
+    }
+  });
+
   const eylemler = [
     ['btnDuraklat', api.isDuraklat],
     ['btnDevam', api.isDevam],
-    ['btnDurdur', api.isDurdur],
     ['btnHazir', api.kullaniciHazir],
   ];
   for (const [id, eylem] of eylemler) {
