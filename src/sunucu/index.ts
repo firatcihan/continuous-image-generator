@@ -8,7 +8,7 @@ import type { IsYoneticisi } from '../is/isYoneticisi.js';
 import { satirlariAyristir } from '../liste.js';
 import { onizlemeUret, yerTutucuVarMi } from '../prompt.js';
 import type { Satir } from '../tipler.js';
-import { istekYetkili } from './guvenlik.js';
+import { cookieTokenOku, istekYetkili } from './guvenlik.js';
 
 export interface SunucuBagimliliklari {
   depo: ProjelerDepo;
@@ -93,9 +93,24 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
   );
 
   uygulama.addHook('onRequest', async (istek, yanit) => {
+    // favicon token taşımaz ve 204 döndüğü için bilgi sızdırmaz; muaf
+    // tutulmazsa her sayfa yüklemesinde konsola 401 basar. Muafiyet TAM yol
+    // eşleşmesiyle sınırlı: `istek.url.startsWith('/favicon.ico')` gerçek bir
+    // soket isteğinde `/favicon.ico/../api/projeler` gibi önekle başlayan
+    // başka yolları da eşleştirir (Node'un http sunucusu `..` segmentlerini
+    // normalize etmez; bu yalnızca `.inject()` testlerinde ya da tarayıcının
+    // `fetch`/`URL` normalizasyonunda görünmez). Bugün başka hiçbir rota bu
+    // önekle çakışmasa da bu, yönlendiricinin iç davranışına güvenmek olurdu
+    // — sorgu dizesini atıp yol adının TAMAMINI karşılaştırıyoruz.
+    const yolAdi = istek.url.split('?')[0];
+    if (yolAdi === '/favicon.ico') return;
+
     const sorgu = istek.query as Record<string, string | undefined>;
     const basliktan = istek.headers['x-token'];
-    const token = typeof basliktan === 'string' ? basliktan : sorgu?.t;
+    const token =
+      (typeof basliktan === 'string' ? basliktan : undefined) ??
+      sorgu?.t ??
+      cookieTokenOku(istek.headers.cookie);
     const origin = istek.headers.origin;
 
     if (!istekYetkili({ token, origin }, { token: b.token, izinliOrigin: b.izinliOrigin() })) {
@@ -109,7 +124,13 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
 
   uygulama.get('/', async (_istek, yanit) => {
     const html = readFileSync(join(b.webKlasoru, 'index.html'), 'utf-8');
-    return yanit.type('text/html; charset=utf-8').send(html);
+    // Modül istekleri (`<script type="module" src="/js/…">`) query ya da
+    // x-token taşımaz. SameSite=Strict sayesinde kötü niyetli bir sitenin
+    // 127.0.0.1'e attığı istek bu çerezi göndermez.
+    return yanit
+      .header('set-cookie', `t=${b.token}; Path=/; SameSite=Strict`)
+      .type('text/html; charset=utf-8')
+      .send(html);
   });
 
   uygulama.get('/api/projeler', async () => b.depo.listele());
@@ -331,6 +352,40 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
       if (!yanit.raw.writableEnded) yanit.raw.end();
     });
   });
+
+  const IZINLI_TURLER: Record<string, string> = {
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.html': 'text/html; charset=utf-8',
+  };
+
+  const varlikServisEt = (altKlasor: string, ad: string, yanit: FastifyReply) => {
+    const uzanti = ad.slice(ad.lastIndexOf('.')).toLowerCase();
+    const tur = IZINLI_TURLER[uzanti];
+    if (tur === undefined) {
+      return yanit.code(400).send({ hata: 'bu dosya türü servis edilmiyor' });
+    }
+
+    const kok = join(b.webKlasoru, altKlasor);
+    const istenen = join(kok, ad);
+    // Önce sözdizimsel kontrol (ucuz, `..` gibi kaba denemeleri eler)
+    if (!icerdeMi(kok, istenen)) {
+      return yanit.code(400).send({ hata: 'web klasörü dışına çıkılamaz' });
+    }
+    // Sonra symlink çözerek gerçek kontrol — `icerdeMi` symlink çözmez
+    const yol = gercekYolIcerdeMi(kok, istenen);
+    if (yol === null) return yanit.code(404).send({ hata: 'dosya bulunamadı' });
+
+    return yanit.type(tur).send(readFileSync(yol, 'utf-8'));
+  };
+
+  uygulama.get('/js/:ad', async (istek, yanit) =>
+    varlikServisEt('js', (istek.params as { ad: string }).ad, yanit));
+
+  uygulama.get('/css/:ad', async (istek, yanit) =>
+    varlikServisEt('css', (istek.params as { ad: string }).ad, yanit));
+
+  uygulama.get('/favicon.ico', async (_istek, yanit) => yanit.code(204).send());
 
   return uygulama;
 }

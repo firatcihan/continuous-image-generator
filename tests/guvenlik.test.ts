@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { istekYetkili, tokenUret } from '../src/sunucu/guvenlik.js';
+import { cookieTokenOku, istekYetkili, tokenUret } from '../src/sunucu/guvenlik.js';
 
 const BEKLENEN = { token: 'gizli123', izinliOrigin: 'http://127.0.0.1:3000' };
 
@@ -39,5 +39,28 @@ describe('tokenUret', () => {
 
   it('URL güvenli karakterler üretir', () => {
     expect(tokenUret()).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+});
+
+describe('cookieTokenOku', () => {
+  it('t çerezini okur', () => {
+    expect(cookieTokenOku('t=abc123')).toBe('abc123');
+  });
+
+  it('birden fazla çerez arasından t\'yi bulur', () => {
+    expect(cookieTokenOku('digeri=1; t=abc123; baska=2')).toBe('abc123');
+  });
+
+  it('base64url değerindeki eşittir işaretlerini korur', () => {
+    expect(cookieTokenOku('t=a=b=c')).toBe('a=b=c');
+  });
+
+  it('başlık yoksa veya t yoksa undefined döner', () => {
+    expect(cookieTokenOku(undefined)).toBeUndefined();
+    expect(cookieTokenOku('digeri=1')).toBeUndefined();
+  });
+
+  it('adı t ile başlayan başka çerezi t sanmaz', () => {
+    expect(cookieTokenOku('token=yanlis')).toBeUndefined();
   });
 });

@@ -24,3 +24,20 @@ export function istekYetkili(girdi: YetkiGirdisi, beklenen: YetkiBeklentisi): bo
 export function tokenUret(): string {
   return randomBytes(24).toString('base64url');
 }
+
+/**
+ * `Cookie` başlığından `t` çerezini okur. Ayrı bir bağımlılık (fastify-cookie)
+ * eklemeye değmeyecek kadar küçük bir ihtiyaç.
+ */
+export function cookieTokenOku(baslik: string | undefined): string | undefined {
+  if (baslik === undefined) return undefined;
+
+  for (const parca of baslik.split(';')) {
+    const esittir = parca.indexOf('=');
+    if (esittir === -1) continue;
+    if (parca.slice(0, esittir).trim() !== 't') continue;
+    // base64url token'da `=` olabilir; ilk `=`'ten sonrasının tamamı değerdir
+    return parca.slice(esittir + 1);
+  }
+  return undefined;
+}
