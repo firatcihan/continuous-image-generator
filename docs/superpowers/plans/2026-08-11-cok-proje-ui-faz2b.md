@@ -205,7 +205,7 @@ export function idGecerliMi(id: string): boolean {
 - [ ] **Step 4: Testin geçtiğini gör**
 
 Run: `yarn vitest run tests/kimlik.test.ts`
-Expected: PASS (15 test)
+Expected: PASS (11 test)
 
 - [ ] **Step 5: `src/depo/yollar.ts` içindeki `projeYolu`'nu değiştir**
 
@@ -245,10 +245,13 @@ import { eskiProjeYolu } from './yollar.js';
 `oku()` içinde `const yol = projeYolu(this.veriKoku);` → `const yol = eskiProjeYolu(this.veriKoku);`
 `yaz()` içinde `atomikYaz(projeYolu(this.veriKoku), ...)` → `atomikYaz(eskiProjeYolu(this.veriKoku), ...)`
 
+`tests/depo-atomik.test.ts` de `projeYolu`'nu import ediyor; oradaki tek
+kullanımı da `eskiProjeYolu` yap (davranış aynı).
+
 - [ ] **Step 7: Tüm testleri ve typecheck'i koştur**
 
 Run: `yarn test && yarn typecheck`
-Expected: 180 + 15 = 195 test PASS, typecheck temiz
+Expected: 180 + 11 = 191 test PASS, typecheck temiz
 
 ---
 
@@ -481,7 +484,7 @@ Expected: PASS (9 test)
 - [ ] **Step 5: Tüm testleri ve typecheck'i koştur**
 
 Run: `yarn test && yarn typecheck`
-Expected: 204 test PASS, typecheck temiz
+Expected: 200 test PASS, typecheck temiz
 
 ---
 
@@ -1168,7 +1171,7 @@ Not: `klasorSahibi` her `yaz()` çağrısında `listele()` koşar (N küçük do
 - [ ] **Step 6: Tüm testleri ve typecheck'i koştur**
 
 Run: `yarn test && yarn typecheck`
-Expected: 228 test PASS, typecheck temiz
+Expected: 224 test PASS, typecheck temiz
 
 ---
 
@@ -1991,7 +1994,7 @@ Rota eşlemesi (galeri/görsel/klasör testleri artık bir proje oluşturup id k
 - [ ] **Step 11: Testleri ve typecheck'i koştur**
 
 Run: `yarn test && yarn typecheck`
-Expected: PASS — silinen `tests/projeDepo.test.ts` (18) ve `tests/sunucu-proje.test.ts` (11) düşer, yeni `tests/sunucu-projeler.test.ts` (≈22) eklenir → toplam ≈ 221; typecheck temiz ve `projeDepo.js` importu kalmamış olmalı
+Expected: PASS — silinen `tests/projeDepo.test.ts` (18) ve `tests/sunucu-proje.test.ts` (11) düşer, yeni `tests/sunucu-projeler.test.ts` (≈22) eklenir → toplam ≈ 222 (CSV rotası ve satirlariAyristir testleri dahil); typecheck temiz ve `projeDepo.js` importu kalmamış olmalı
 
 - [ ] **Step 12: Eski modüle atıf kalmadığını doğrula**
 
@@ -2300,7 +2303,7 @@ import { cookieTokenOku, istekYetkili } from './guvenlik.js';
 - [ ] **Step 10: Testleri ve typecheck'i koştur**
 
 Run: `yarn test && yarn typecheck`
-Expected: PASS — statik testler (11) + çerez testleri (5) dahil ≈ 237 test; typecheck temiz
+Expected: PASS — statik testler (11) + çerez testleri (5) dahil ≈ 238 test; typecheck temiz
 
 ---
 
@@ -4077,7 +4080,7 @@ Bu adım gerçek hesap gerektirir; kullanıcı ile birlikte koşulur.
 - [ ] **Step 5: Son kontrol**
 
 Run: `yarn test && yarn typecheck`
-Expected: PASS, ≈237 test
+Expected: PASS, ≈238 test
 
 Run: `grep -rn "config.json\|liste.csv" README.md src/`
 Expected: yalnızca `config.ornek.json` / `liste.ornek.csv` dosya adlarına atıf varsa onlar da kaldırılmış olmalı — çıktı boş
