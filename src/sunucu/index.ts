@@ -95,22 +95,30 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
   uygulama.addHook('onRequest', async (istek, yanit) => {
     // favicon token taşımaz ve 204 döndüğü için bilgi sızdırmaz; muaf
     // tutulmazsa her sayfa yüklemesinde konsola 401 basar. Muafiyet TAM yol
-    // eşleşmesiyle sınırlı: `istek.url.startsWith('/favicon.ico')` gerçek bir
-    // soket isteğinde `/favicon.ico/../api/projeler` gibi önekle başlayan
-    // başka yolları da eşleştirir (Node'un http sunucusu `..` segmentlerini
-    // normalize etmez; bu yalnızca `.inject()` testlerinde ya da tarayıcının
-    // `fetch`/`URL` normalizasyonunda görünmez). Bugün başka hiçbir rota bu
-    // önekle çakışmasa da bu, yönlendiricinin iç davranışına güvenmek olurdu
-    // — sorgu dizesini atıp yol adının TAMAMINI karşılaştırıyoruz.
+    // eşleşmesiyle VE GET metoduyla sınırlı: `istek.url.startsWith('/favicon.ico')`
+    // gerçek bir soket isteğinde `/favicon.ico/../api/projeler` gibi önekle
+    // başlayan başka yolları da eşleştirir (Node'un http sunucusu `..`
+    // segmentlerini normalize etmez; bu yalnızca `.inject()` testlerinde ya
+    // da tarayıcının `fetch`/`URL` normalizasyonunda görünmez). Bugün başka
+    // hiçbir rota bu önekle çakışmasa da bu, yönlendiricinin iç davranışına
+    // güvenmek olurdu — sorgu dizesini atıp yol adının TAMAMINI
+    // karşılaştırıyoruz. Metodu da GET'e sabitliyoruz: aksi hâlde
+    // `POST /favicon.ico`'nun auth'suz kalması, o yolda kayıtlı başka bir
+    // metodun olmamasına (yine yönlendirici şansına) bağlı kalırdı.
     const yolAdi = istek.url.split('?')[0];
-    if (yolAdi === '/favicon.ico') return;
+    if (istek.method === 'GET' && yolAdi === '/favicon.ico') return;
 
     const sorgu = istek.query as Record<string, string | undefined>;
     const basliktan = istek.headers['x-token'];
-    const token =
-      (typeof basliktan === 'string' ? basliktan : undefined) ??
-      sorgu?.t ??
-      cookieTokenOku(istek.headers.cookie);
+    const basliktanToken = typeof basliktan === 'string' ? basliktan : undefined;
+    const sorguToken = sorgu?.t;
+    const cerezToken = cookieTokenOku(istek.headers.cookie);
+    const token = basliktanToken ?? sorguToken ?? cerezToken;
+    // Yalnızca header ve sorgu boşken VE çerezden bir değer geldiğinde true —
+    // aşağıdaki ek kontrolün diğer iki kaynağı etkilememesi için kaynağı
+    // ayrıca izliyoruz (istekYetkili'nin imzası değişmiyor, bu bilgi yalnızca
+    // burada, kancada kullanılıyor).
+    const tokenCerezden = basliktanToken === undefined && sorguToken === undefined && token !== undefined;
     const origin = istek.headers.origin;
 
     if (!istekYetkili({ token, origin }, { token: b.token, izinliOrigin: b.izinliOrigin() })) {
@@ -120,15 +128,50 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
       // istek 401 görürken arka planda iş başlatabilirdi.
       return yanit.code(401).send({ hata: 'yetkisiz istek' });
     }
+
+    // `SameSite=Strict` yalnızca ÇAPRAZ-SITE isteklerde çerezi keser.
+    // 127.0.0.1'in BAŞKA BİR PORTUNDAKİ bir sayfa bu sunucuyla AYNI SITE
+    // sayılır (SameSite site bazında hesaplanır, port bazında değil) — çerez
+    // yine de gider. Öyle bir sayfanın `<img>`/`<script>`/`<link>` gibi
+    // alt-kaynak istekleri de hiç Origin başlığı taşımaz, `istekYetkili` ise
+    // Origin yokken kabul eder. Yani token çerezden geldiğinde yukarıdaki iki
+    // kontrol (token + Origin) tek başına yetmez; ek olarak
+    // `sec-fetch-site: same-origin` arıyoruz — çapraz-port bir istek
+    // 'same-site' taşır, kendi sayfamızın fetch/modül-import/<img>/
+    // EventSource istekleriyse 'same-origin' taşır. Başlık HİÇ yoksa kabul
+    // ediyoruz (fail-open): bu saldırı bir tarayıcı gerektirir ve onu
+    // yapabilecek her tarayıcı bu başlığı gönderir; eksikse muhtemelen
+    // tarayıcı olmayan bir istemcidir (curl, test), orada çerez zaten tehdit
+    // değil — yokluğunda reddetmenin güvenlik faydası olmaz, yalnızca o
+    // istemcileri kırar.
+    if (tokenCerezden) {
+      const fetchSite = istek.headers['sec-fetch-site'];
+      if (typeof fetchSite === 'string' && fetchSite !== 'same-origin') {
+        return yanit.code(401).send({ hata: 'yetkisiz istek' });
+      }
+    }
   });
 
   uygulama.get('/', async (_istek, yanit) => {
     const html = readFileSync(join(b.webKlasoru, 'index.html'), 'utf-8');
     // Modül istekleri (`<script type="module" src="/js/…">`) query ya da
-    // x-token taşımaz. SameSite=Strict sayesinde kötü niyetli bir sitenin
-    // 127.0.0.1'e attığı istek bu çerezi göndermez.
+    // x-token taşımaz; bu yüzden token'ı ayrıca çerezle veriyoruz.
+    // `HttpOnly`: sayfanın kendi JS'i bu çerezi hiç okumaz — token'ı
+    // `location.search`'ten alıp `x-token`/`?t=` olarak taşır; çerez yalnızca
+    // tarayıcının alt-kaynak isteklerine otomatik eklemesi için var.
+    // `SameSite=Strict`: yalnızca ÇAPRAZ-SITE isteklerde çerezi keser —
+    // 127.0.0.1'in BAŞKA BİR PORTUNDAKİ bir sayfa bu sunucuyla AYNI SITE
+    // sayılır (SameSite port değil site bazlı), çerez oraya da gider. Orada
+    // duran koruma Origin kontrolüdür; ama alt-kaynak istekleri (`<img>`,
+    // `<script>`, `EventSource`) hiç Origin taşımaz — bu yüzden `onRequest`
+    // kancası, token çerezden geldiğinde ayrıca `sec-fetch-site: same-origin`
+    // şartı arıyor (bkz. o kancadaki yorum). Not: başka bir porttaki bir
+    // sayfa `t=cop; Path=/js` gibi daha spesifik bir çerez set edip bizim
+    // `Path=/` çerezimizin önüne geçirebilir — bu yalnızca kullanılabilirliği
+    // bozar (kendi çerezimiz o path'te görünmez olur), bir yetki atlatma
+    // değildir.
     return yanit
-      .header('set-cookie', `t=${b.token}; Path=/; SameSite=Strict`)
+      .header('set-cookie', `t=${b.token}; Path=/; SameSite=Strict; HttpOnly`)
       .type('text/html; charset=utf-8')
       .send(html);
   });
@@ -353,10 +396,11 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
     });
   });
 
+  // Yalnızca /js ve /css bunu kullanıyor; index.html zaten GET / tarafından
+  // doğrudan okunuyor — '.html'i eklemek allowlist'i gereksiz genişletirdi.
   const IZINLI_TURLER: Record<string, string> = {
     '.js': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8',
-    '.html': 'text/html; charset=utf-8',
   };
 
   const varlikServisEt = (altKlasor: string, ad: string, yanit: FastifyReply) => {

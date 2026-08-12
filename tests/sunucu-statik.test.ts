@@ -79,6 +79,51 @@ describe('çerez ile yetki', () => {
     });
     expect(y.statusCode).toBe(200);
   });
+
+  // Çerez geçerli olsa bile Origin kontrolü hâlâ devrede olmalı — SameSite
+  // yalnızca çapraz-SITE'ı keser, çapraz-PORT'u kesmez (bkz. onRequest
+  // kancasındaki yorum), bu yüzden Origin kontrolünün orada bekçilik yapmaya
+  // devam ettiğini ayrıca doğruluyoruz.
+  it('çerez geçerli olsa da yabancı Origin\'i reddeder', async () => {
+    const y = await uygulama.inject({
+      method: 'GET', url: '/api/projeler',
+      headers: { cookie: `t=${TOKEN}`, origin: 'http://127.0.0.1:9999' },
+    });
+    expect(y.statusCode).toBe(401);
+  });
+});
+
+describe('çerez + sec-fetch-site', () => {
+  it('çerez + same-origin kabul edilir', async () => {
+    const y = await uygulama.inject({
+      method: 'GET', url: '/js/api.js',
+      headers: { cookie: `t=${TOKEN}`, 'sec-fetch-site': 'same-origin' },
+    });
+    expect(y.statusCode).toBe(200);
+  });
+
+  it('çerez + same-site (başka port) reddedilir', async () => {
+    const y = await uygulama.inject({
+      method: 'GET', url: '/js/api.js',
+      headers: { cookie: `t=${TOKEN}`, 'sec-fetch-site': 'same-site' },
+    });
+    expect(y.statusCode).toBe(401);
+  });
+
+  it('çerez + sec-fetch-site başlığı yoksa kabul edilir (fail-open)', async () => {
+    const y = await uygulama.inject({
+      method: 'GET', url: '/js/api.js', headers: { cookie: `t=${TOKEN}` },
+    });
+    expect(y.statusCode).toBe(200);
+  });
+
+  it('x-token/sorgu ile gelen token\'a sec-fetch-site kısıtı uygulanmaz', async () => {
+    const y = await uygulama.inject({
+      method: 'GET', url: '/js/api.js',
+      headers: { 'x-token': TOKEN, 'sec-fetch-site': 'same-site' },
+    });
+    expect(y.statusCode).toBe(200);
+  });
 });
 
 describe('statik varlıklar', () => {
@@ -94,7 +139,21 @@ describe('statik varlıklar', () => {
     const y = await uygulama.inject({
       method: 'GET', url: '/js/..%2F..%2Fgizli.txt', headers: { cookie: `t=${TOKEN}` },
     });
-    expect([400, 404]).toContain(y.statusCode);
+    expect(y.statusCode).toBe(400);
+    expect(y.body).not.toContain('sır');
+  });
+
+  // Yukarıdaki test uzantı kontrolünde durur (.txt izinli değil) — `icerdeMi`
+  // ve `gercekYolIcerdeMi` silinse bile aynı sonucu (400) verirdi, yani
+  // birinci katmanın gerçekten bir şeyi ENGELLEDİĞİ hiçbir şey kanıtlamıyor.
+  // İzinli bir uzantıyla (.js) kodlanmış `..%2F` kullanan bu test, birinci
+  // katmanı (icerdeMi) gerçekten tetikler.
+  it('izinli uzantıyla bile kodlanmış ayraçla klasör dışına çıkamaz', async () => {
+    writeFileSync(join(kok, 'gizli.js'), 'sır', 'utf-8');
+    const y = await uygulama.inject({
+      method: 'GET', url: '/js/..%2F..%2Fgizli.js', headers: { cookie: `t=${TOKEN}` },
+    });
+    expect(y.statusCode).toBe(400);
     expect(y.body).not.toContain('sır');
   });
 
