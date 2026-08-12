@@ -28,25 +28,34 @@ export async function projeSec(id) {
   try {
     await projeUygula(await api.proje(id));
   } catch (hata) {
-    // Bilinmeyen id (404): hash'i temizle, listeyi TAZELEYİP tek seferlik
-    // ilk projeye düş. Listeyi tazelemeden düşersek ve o "ilk" proje de
-    // sunucuda yoksa (başka bir sekmede silinmiş, ya da diskten kaybolmuş
-    // olabilir), `durum.projeler` hiç değişmediği için "ilk proje" hep aynı
-    // geçersiz id kalır — `projeSec`'i burada yeniden çağırmak sınırsız,
-    // geri kapamasız bir döngüye (API'yi durmadan dövme) girerdi. Bu yüzden
-    // ikinci deneme `projeSec`'e rekürsif dönmüyor: tek bir düz deneme
-    // yapılıyor, o da başarısız olursa boş duruma (aktifProje: null, hash
-    // yok) iniliyor ve `durum.hata` kullanıcının anlayabileceği bir mesajla
-    // dolu kalıyor.
+    // Bilinmeyen id (404): hash'i temizle, listeyi TAZELEYİP tek seferlik ilk
+    // projeye düş — bir yenileme + bir tek yeniden deneme, o da olmazsa boş
+    // duruma in. ESKİ sürüm burada `projeSec`'i kendi kendine çağırıyordu;
+    // liste hiç tazelenmediği için "ilk proje" bayat kalıyor ve bulunamayan
+    // id her seferinde AYNI hataya düşüp API'yi geri kapamasız (backoff'suz),
+    // sınırsız bir döngüde dövüyordu. Tek deneme + geri dönüş yok kuralı
+    // bunu kapatıyor.
+    //
+    // `projeleriYukle()` ve tek yeniden deneme İÇ bir try/catch'e alınmış
+    // olmalı: `api.projeler()`/`api.proje()` süresi dolmuş bir oturum
+    // çerezinde (401) ya da kopan bağlantıda da fırlatabilir. Bu fırlatma
+    // dıştaki `catch`'in DIŞINA sızarsa `projeSec`'in döndürdüğü promise
+    // reddedilir; çoğu çağrı yeri fire-and-forget olduğu için
+    // (`projeler.js`'teki `() => void projeSec(...)`, `uygulama.js`'teki
+    // `() => void yonlendir()`) bu YAKALANMAMIŞ BİR REDDETME olarak
+    // görünürdü, kullanıcıya hiç ulaşmadan; `baslat()`'ta ise `await
+    // yonlendir()` fırlatırsa sondaki `projeleriCiz()` hiç çalışmaz, sayfa
+    // yarım kalırdı. Bu yüzden burada da fırlayan HER ŞEY aynı temiz uç
+    // duruma iniyor: proje yok, hash yok, hata görünür.
     guncelle({ aktifProje: null, hata: hata.message });
     location.hash = '';
-    await projeleriYukle();
-    const ilk = durum.projeler[0];
-    if (ilk === undefined) return;
     try {
+      await projeleriYukle();
+      const ilk = durum.projeler[0];
+      if (ilk === undefined) return;
       await projeUygula(await api.proje(ilk.id));
-    } catch (ikinciHata) {
-      guncelle({ aktifProje: null, hata: ikinciHata.message });
+    } catch (kurtarmaHatasi) {
+      guncelle({ aktifProje: null, hata: kurtarmaHatasi.message });
     }
   }
 }
@@ -133,10 +142,15 @@ export function projeleriCiz() {
  * yeniden çizim) DOM'dan koparıldığı durumu yakalar: o zaman girdi hâlâ
  * `kapandi = false` olabilir ama artık belgede değildir — bu durumda
  * gönderim yapmadan çıkarız, metin yukarıdaki "açık girdiyi koru" mantığıyla
- * yeni bir satırda korunur. Aynı kopma, gönderim SIRASINDA (`api.projeOlustur`
- * beklerken) de olabilir — `olustur()`'ün `catch` bloğu bu durumu ayrıca ele
- * alır: orijinal `girdi` artık belgede değilse ona `focus()` çağırmak yerine
- * taze bir satır açıp yazılan adı oraya taşır.
+ * yeni bir satırda korunur.
+ *
+ * `olustur()`'ün `catch` bloğu, `api.projeOlustur` reddedince AYNI satırı
+ * hiçbir zaman yeniden kullanmaz — yalnızca `guncelle({ hata })` çağırması
+ * bile `projeleriCiz()`'i tetikler ve o, `#projeListesi`'ni koşulsuz söker;
+ * "korunan" bir girdi de eski düğüm olarak değil, taze bir ikizi olarak geri
+ * gelir. Yani orijinal `girdi` o noktada zaten belgede değildir — `catch`
+ * doğrudan `yeniProjeSatiriAc()` ile taze bir satır açıp yazılan adı oraya
+ * taşır.
  */
 export function yeniProjeSatiriAc() {
   const kap = $('projeListesi');
@@ -174,23 +188,19 @@ export function yeniProjeSatiriAc() {
       await projeleriYukle();
       await projeSec(proje.id);
     } catch (hata) {
+      // `guncelle({ hata })` az önce `projeleriCiz()`'i (ona abone olan tek
+      // dinleyici) tetikledi ve o, `kap.textContent = ''` ile #projeListesi'nin
+      // TÜM çocuklarını KOŞULSUZ söker — bu satırın disabled olup olmaması
+      // fark etmez, "korunan" bir girdi bile eski düğüm olarak değil, taze
+      // bir ikizi olarak geri gelir (bkz. projeleriCiz). Yani bu noktada
+      // orijinal `girdi` HİÇBİR ZAMAN belgede kalmıyor; ona `focus()` çağıran
+      // bir "aynı satırı yeniden kullan" dalı hiçbir zaman çalışmazdı (ölü
+      // kod olurdu). Bunun yerine tek yol: taze bir satır aç, yazılan adı
+      // oraya taşı.
       guncelle({ hata: hata.message });
-      if (girdi.isConnected) {
-        kapandi = false;
-        girdi.disabled = false;
-        girdi.focus();
-      } else {
-        // `await api.projeOlustur` beklerken ARADA ilgisiz bir guncelle()
-        // (ör. kullanıcı başka bir projeye tıkladı) projeleriCiz()'i tetiklemiş
-        // ve bu satırı (disabled olduğu için "kapalı" sayılıp) DOM'dan
-        // koparmış olabilir. Böyle bir durumda kopmuş `girdi`'ye
-        // disabled=false/focus() yapmak sessiz bir no-op'tur (kopmuş düğüm
-        // odak alamaz) — kullanıcı hiçbir şey görmeden yazdığı ad kaybolurdu.
-        // Bunun yerine taze bir satır açıp yazılan adı oraya geri koyuyoruz.
-        yeniProjeSatiriAc();
-        const yeni = $('projeListesi').querySelector('.yeni-proje-girdisi');
-        if (yeni !== null) yeni.value = ad;
-      }
+      yeniProjeSatiriAc();
+      const yeni = $('projeListesi').querySelector('.yeni-proje-girdisi');
+      if (yeni !== null) yeni.value = ad;
     }
   };
 
