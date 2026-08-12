@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { dosyaAdiTemizle } from '../liste.js';
 import type { Config, Satir } from '../tipler.js';
 import { atomikYaz } from './atomik.js';
-import { projeYolu } from './yollar.js';
+import { eskiProjeYolu } from './yollar.js';
 
 export interface Ayarlar {
   modelAdi: string;
@@ -78,7 +78,7 @@ export class ProjeDepo {
   constructor(private veriKoku: string) {}
 
   oku(ciktiKoku: string): Proje {
-    const yol = projeYolu(this.veriKoku);
+    const yol = eskiProjeYolu(this.veriKoku);
     if (!existsSync(yol)) return varsayilanProje(ciktiKoku);
 
     let ham: unknown;
@@ -103,7 +103,7 @@ export class ProjeDepo {
 
   yaz(proje: Proje): void {
     const damgali: Proje = { ...proje, guncellemeTarihi: new Date().toISOString() };
-    atomikYaz(projeYolu(this.veriKoku), JSON.stringify(damgali, null, 2));
+    atomikYaz(eskiProjeYolu(this.veriKoku), JSON.stringify(damgali, null, 2));
   }
 }
 

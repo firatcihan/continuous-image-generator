@@ -5,7 +5,16 @@ import { realpathSync } from 'node:fs';
 export const VARSAYILAN_VERI_KOKU = join(homedir(), '.chatgpt-gorsel-uretici');
 export const VARSAYILAN_CIKTI_KOKU = join(homedir(), 'ChatGPT-Gorseller');
 
-export function projeYolu(veriKoku: string): string {
+export function projelerKlasoru(veriKoku: string): string {
+  return join(veriKoku, 'projeler');
+}
+
+export function projeDosyaYolu(veriKoku: string, id: string): string {
+  return join(projelerKlasoru(veriKoku), `${id}.json`);
+}
+
+/** Faz 2A'nın tekil proje dosyası — yalnızca göç kontrolü için. */
+export function eskiProjeYolu(veriKoku: string): string {
   return join(veriKoku, 'proje.json');
 }
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { atomikYaz, type DosyaIslemleri } from '../src/depo/atomik.js';
-import { chromeProfilYolu, gercekYolIcerdeMi, icerdeMi, projeYolu } from '../src/depo/yollar.js';
+import { chromeProfilYolu, eskiProjeYolu, gercekYolIcerdeMi, icerdeMi } from '../src/depo/yollar.js';
 
 let kok: string;
 beforeEach(() => {
@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe('yollar', () => {
   it('proje ve chrome profil yollarını kök altında üretir', () => {
-    expect(projeYolu('/a/b')).toBe(join('/a/b', 'proje.json'));
+    expect(eskiProjeYolu('/a/b')).toBe(join('/a/b', 'proje.json'));
     expect(chromeProfilYolu('/a/b')).toBe(join('/a/b', 'chrome_profil'));
   });
 
