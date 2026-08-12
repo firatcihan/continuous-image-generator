@@ -198,6 +198,22 @@ satırını besler; istemci tahmini yapmaz.
 Galeri ve görsel rotaları klasörü `:id`'den çözer. Faz 2A'nın iki katmanlı yol
 doğrulaması (`icerdeMi` + `gercekYolIcerdeMi`) aynen korunur.
 
+### CSV ayrıştırma
+
+```
+POST   /api/csv/ayristir              { icerik } → { satirlar } | 400 { hata }
+```
+
+CSV ayrıştırma **yalnızca sunucuda** yapılır. Tarayıcıda ikinci bir ayrıştırıcı
+(tırnaklı alan, CRLF, tekrar eden dosya adı kuralları) aynı mantığın iki
+kopyası demek olurdu; kopyalar zamanla ayrışır ve kullanıcı CSV'sinin
+tarayıcıda geçip sunucuda reddedilmesiyle karşılaşırdı. Mevcut testli
+`csvAyristir` tek doğruluk kaynağı kalır.
+
+`src/liste.ts`'e saf `satirlariAyristir(icerik)` eklenir; başlık satırı
+(`metin,dosya_adi`) isteğe bağlıdır. Terminal girişi kaldırıldığında kullanıcısı
+kalmayan `listeYukle` silinir.
+
 ### İş
 
 ```

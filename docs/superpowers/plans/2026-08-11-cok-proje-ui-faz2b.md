@@ -1178,10 +1178,11 @@ Bu task tek parça: `src/sunucu/index.ts` `ProjelerDepo`'ya geçtiği anda `src/
 
 **Files:**
 - Modify: `src/sunucu/index.ts` (tam yeniden yazım)
+- Modify: `src/liste.ts` (`satirlariAyristir` eklenir, ölü `listeYukle` kaldırılır)
 - Modify: `src/baslat.ts` (satır 4, 22, 55, 85-91)
 - Create: `tests/sunucu-projeler.test.ts`
 - Delete: `src/depo/projeDepo.ts`, `tests/projeDepo.test.ts`, `tests/sunucu-proje.test.ts`
-- Modify: `tests/sunucu-galeri.test.ts`, `tests/sunucu-bos-govde.test.ts`, `tests/sunucu-yetki-yan-etki.test.ts`, `tests/sunucu-is.test.ts`, `tests/sunucu-tarayici.test.ts`
+- Modify: `tests/liste.test.ts`, `tests/sunucu-galeri.test.ts`, `tests/sunucu-bos-govde.test.ts`, `tests/sunucu-yetki-yan-etki.test.ts`, `tests/sunucu-is.test.ts`, `tests/sunucu-tarayici.test.ts`
 
 **Interfaces:**
 - Consumes: `ProjelerDepo`, `Proje` (`../depo/projeler.js`), `idGecerliMi` (`../depo/kimlik.js`), `icerdeMi`/`gercekYolIcerdeMi` (`../depo/yollar.js`), `istekYetkili` (`./guvenlik.js`), `onizlemeUret`/`yerTutucuVarMi` (`../prompt.js`)
@@ -1785,6 +1786,148 @@ Bu bloklar korunur; yalnızca `POST /api/is/baslat` gövde alır. `uygulama.get(
 
 `duraklat`/`devam`/`durdur`/`kullanici-hazir` döngüsü ve `GET /api/is/akis` bloğu **değişmez**. Dosya sonundaki `return uygulama;` ve `mesgulMu` fonksiyonu da değişmez.
 
+- [ ] **Step 7b: `src/liste.ts`'e saf `satirlariAyristir` ekle, ölü `listeYukle`'yi kaldır**
+
+CSV ayrıştırma yalnızca sunucuda yapılacak (tarayıcı `POST /api/csv/ayristir`
+çağırır), bu yüzden dosyadan değil **metinden** ayrıştıran saf bir fonksiyon
+gerekiyor. `listeYukle` terminal girişi kaldırıldığında kullanıcısız kaldı;
+silinir.
+
+`src/liste.ts` içindeki `listeYukle` fonksiyonunu ve `readFileSync` importunu
+sil, yerine şunu ekle:
+
+```ts
+/**
+ * `metin,dosya_adi` CSV metnini satırlara çevirir. Başlık satırı isteğe
+ * bağlı: varsa sütun sırası başlıktan okunur, yoksa ilk alan metin, ikinci
+ * alan dosya adı sayılır.
+ *
+ * Hata mesajlarındaki satır numarası kullanıcının gördüğü CSV satırıdır
+ * (başlık dahil, 1'den başlar).
+ */
+export function satirlariAyristir(icerik: string): Satir[] {
+  const ham = csvAyristir(icerik);
+  if (ham.length === 0) return [];
+
+  const baslik = ham[0].map((sutun) => sutun.trim().toLowerCase());
+  const basliklidir = baslik.includes('metin') && baslik.includes('dosya_adi');
+
+  const metinIdx = basliklidir ? baslik.indexOf('metin') : 0;
+  const dosyaIdx = basliklidir ? baslik.indexOf('dosya_adi') : 1;
+  const ilkVeri = basliklidir ? 1 : 0;
+
+  const satirlar: Satir[] = [];
+  const gorulenAdlar = new Set<string>();
+
+  for (let i = ilkVeri; i < ham.length; i++) {
+    const metin = (ham[i][metinIdx] ?? '').trim();
+    const dosyaAdi = dosyaAdiTemizle(ham[i][dosyaIdx] ?? '');
+
+    if (metin === '' || dosyaAdi === '') {
+      throw new Error(`${i + 1}. satır: "metin" ve "dosya_adi" boş olamaz`);
+    }
+    if (gorulenAdlar.has(dosyaAdi)) {
+      throw new Error(`${i + 1}. satır: "${dosyaAdi}" dosya adı tekrar ediyor`);
+    }
+    gorulenAdlar.add(dosyaAdi);
+    satirlar.push({ metin, dosyaAdi });
+  }
+  return satirlar;
+}
+```
+
+`tests/liste.test.ts`: `listeYukle` describe bloğunu ve `listeDosyasiYaz`
+yardımcısını (artık kullanılmıyor) sil, yerine ekle:
+
+```ts
+describe('satirlariAyristir', () => {
+  it('başlıklı CSV\'yi ayrıştırır', () => {
+    expect(satirlariAyristir('metin,dosya_adi\nkarda,a\nplajda,b\n')).toEqual([
+      { metin: 'karda', dosyaAdi: 'a' },
+      { metin: 'plajda', dosyaAdi: 'b' },
+    ]);
+  });
+
+  it('başlıksız CSV\'yi de ayrıştırır', () => {
+    expect(satirlariAyristir('karda,a\n')).toEqual([{ metin: 'karda', dosyaAdi: 'a' }]);
+  });
+
+  it('sütun sırası başlıktan okunur', () => {
+    expect(satirlariAyristir('dosya_adi,metin\na,karda\n')).toEqual([
+      { metin: 'karda', dosyaAdi: 'a' },
+    ]);
+  });
+
+  it('tırnaklı alanı ve .png uzantısını doğru ele alır', () => {
+    expect(satirlariAyristir('"kedi, karda",dag.png\n')).toEqual([
+      { metin: 'kedi, karda', dosyaAdi: 'dag' },
+    ]);
+  });
+
+  it('boş alanı ve tekrar eden dosya adını satır numarasıyla reddeder', () => {
+    expect(() => satirlariAyristir('metin,dosya_adi\n,bos\n')).toThrow('2. satır');
+    expect(() => satirlariAyristir('metin,dosya_adi\na,ayni\nb,ayni\n')).toThrow('tekrar');
+  });
+
+  it('boş metin için boş liste döner', () => {
+    expect(satirlariAyristir('')).toEqual([]);
+  });
+});
+```
+
+Import satırını güncelle: `listeYukle` yerine `satirlariAyristir`.
+
+- [ ] **Step 7c: `POST /api/csv/ayristir` rotasını ekle**
+
+`src/sunucu/index.ts`'e (iş rotalarından önce) ekle ve importa `satirlariAyristir`'ı al:
+
+```ts
+  // CSV ayrıştırma tek yerde: tarayıcıda ikinci bir ayrıştırıcı olsa kopyalar
+  // zamanla ayrışır ve kullanıcının CSV'si tarayıcıda geçip sunucuda reddedilirdi.
+  uygulama.post('/api/csv/ayristir', async (istek, yanit) => {
+    const govde = (istek.body ?? {}) as { icerik?: unknown };
+    if (typeof govde.icerik !== 'string') {
+      return yanit.code(400).send({ hata: 'icerik metni gerekli' });
+    }
+    try {
+      return { satirlar: satirlariAyristir(govde.icerik) };
+    } catch (hata) {
+      return yanit.code(400).send({ hata: (hata as Error).message });
+    }
+  });
+```
+
+`tests/sunucu-projeler.test.ts` sonuna ekle:
+
+```ts
+describe('POST /api/csv/ayristir', () => {
+  it('CSV metnini satırlara çevirir', async () => {
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/csv/ayristir', headers: yetkili(),
+      payload: { icerik: 'metin,dosya_adi\nkarda,a\n' },
+    });
+    expect(y.statusCode).toBe(200);
+    expect(y.json().satirlar).toEqual([{ metin: 'karda', dosyaAdi: 'a' }]);
+  });
+
+  it('geçersiz CSV\'yi 400 ve satır numaralı mesajla reddeder', async () => {
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/csv/ayristir', headers: yetkili(),
+      payload: { icerik: 'metin,dosya_adi\na,ayni\nb,ayni\n' },
+    });
+    expect(y.statusCode).toBe(400);
+    expect(y.json().hata).toMatch(/tekrar/);
+  });
+
+  it('icerik yoksa 400 döner', async () => {
+    const y = await uygulama.inject({
+      method: 'POST', url: '/api/csv/ayristir', headers: yetkili(), payload: {},
+    });
+    expect(y.statusCode).toBe(400);
+  });
+});
+```
+
 - [ ] **Step 8: `src/baslat.ts`'i yeni depoya bağla**
 
 Dört değişiklik:
@@ -2175,7 +2318,7 @@ Buradan sonraki task'larda otomatik test yok (spec §9: `web/` test edilmez, UI 
 - Produces:
   - `api.js`: `api` nesnesi — `projeler()`, `proje(id)`, `projeOlustur(ad)`, `projeKaydet(id, proje)`, `projeSil(id, gorselleriSil)`, `onizleme(id, basePrompt, satirlar)`, `galeri(id)`, `klasoruAc(id)`, `is()`, `isBaslat(projeId)`, `isDuraklat()`, `isDevam()`, `isDurdur()`, `kullaniciHazir()`, `tarayici()`, `tarayiciAc()`
   - `durum.js`: `durum` (nesne), `guncelle(parca)`, `abone(dinleyici) => cozucu`
-  - `projeler.js`: `projeleriCiz()`, `projeleriYukle()`, `projeSec(id)`
+  - `projeler.js`: `projeleriCiz()`, `projeleriYukle()`, `projeSec(id)`, `yeniProjeSatiriAc()`
   - `uygulama.js`: modül girişi — `baslat()` çağırır, dışa bir şey vermez
 
 - [ ] **Step 1: `web/js/api.js` yaz**
@@ -2235,6 +2378,10 @@ export const api = {
 
   tarayici: () => istek('/api/tarayici'),
   tarayiciAc: () => istek('/api/tarayici/ac', { method: 'POST' }),
+
+  // CSV ayrıştırma sunucuda; tarayıcıda ikinci bir ayrıştırıcı tutulmuyor
+  csvAyristir: (icerik) =>
+    istek('/api/csv/ayristir', { method: 'POST', body: JSON.stringify({ icerik }) }),
 };
 
 /** Görsel URL'si — <img src> için. */
@@ -2567,23 +2714,99 @@ export function projeleriCiz() {
   $('projeAdi').textContent = durum.aktifProje ? durum.aktifProje.ad : '—';
 }
 
-export async function yeniProjeOlustur() {
-  const ad = prompt('Proje adı:');
-  if (ad === null || ad.trim() === '') return;
+/**
+ * Sol panelin sonunda düzenlenebilir boş bir satır açar: Enter oluşturur,
+ * Esc veya boş bırakıp odak kaybı iptal eder. Ayrı form ekranı yok —
+ * "ad yaz, gerisi otomatik" kararının karşılığı.
+ */
+export function yeniProjeSatiriAc() {
+  const kap = $('projeListesi');
+  if (kap.querySelector('.yeni-proje-girdisi') !== null) {
+    kap.querySelector('.yeni-proje-girdisi').focus();
+    return;
+  }
 
-  const proje = await api.projeOlustur(ad.trim());
-  await projeleriYukle();
-  await projeSec(proje.id);
+  const satir = document.createElement('div');
+  satir.className = 'proje-satiri';
+
+  const girdi = document.createElement('input');
+  girdi.type = 'text';
+  girdi.className = 'yeni-proje-girdisi';
+  girdi.placeholder = 'Proje adı…';
+
+  let kapandi = false;
+  const kapat = () => {
+    if (kapandi) return;
+    kapandi = true;
+    satir.remove();
+  };
+
+  const olustur = async () => {
+    const ad = girdi.value.trim();
+    if (ad === '') {
+      kapat();
+      return;
+    }
+    kapandi = true; // yeniden çizim satırı zaten kaldıracak
+    girdi.disabled = true;
+    try {
+      const proje = await api.projeOlustur(ad);
+      await projeleriYukle();
+      await projeSec(proje.id);
+    } catch (hata) {
+      guncelle({ hata: hata.message });
+      kapandi = false;
+      girdi.disabled = false;
+      girdi.focus();
+    }
+  };
+
+  girdi.addEventListener('keydown', (olay) => {
+    if (olay.key === 'Enter') {
+      olay.preventDefault();
+      void olustur();
+    } else if (olay.key === 'Escape') {
+      olay.preventDefault();
+      kapat();
+    }
+  });
+  girdi.addEventListener('blur', () => void olustur());
+
+  satir.append(girdi);
+  kap.append(satir);
+  girdi.focus();
 }
 ```
 
-Not: proje adı `prompt()` ile alınıyor — spec'in "ad yaz, gerisi otomatik" kararının en ince karşılığı; ayrı bir form ekranı açmıyor.
+`projeleriCiz` içinde, listeyi yeniden çizerken açık bir yeni-proje girdisi
+varsa onu koru — aksi halde her `guncelle()` kullanıcının yazdığı adı silerdi.
+`kap.textContent = ''` satırından önce:
+
+```js
+  const acikGirdi = kap.querySelector('.yeni-proje-girdisi');
+  const acikDeger = acikGirdi === null ? null : acikGirdi.value;
+```
+
+ve fonksiyonun sonunda:
+
+```js
+  if (acikDeger !== null) {
+    yeniProjeSatiriAc();
+    kap.querySelector('.yeni-proje-girdisi').value = acikDeger;
+  }
+```
+
+`web/css/stil.css`'e ekle:
+
+```css
+.yeni-proje-girdisi { width: 100%; padding: 4px 6px; font-size: 14px; }
+```
 
 - [ ] **Step 6: `web/js/uygulama.js` yaz**
 
 ```js
 import { abone, durum } from './durum.js';
-import { projeSec, projeleriCiz, projeleriYukle, yeniProjeOlustur } from './projeler.js';
+import { projeSec, projeleriCiz, projeleriYukle, yeniProjeSatiriAc } from './projeler.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -2606,7 +2829,7 @@ async function yonlendir() {
 async function baslat() {
   abone(projeleriCiz);
 
-  $('btnYeniProje').addEventListener('click', () => void yeniProjeOlustur());
+  $('btnYeniProje').addEventListener('click', () => yeniProjeSatiriAc());
   window.addEventListener('hashchange', () => void yonlendir());
 
   await projeleriYukle();
@@ -2968,18 +3191,19 @@ Expected: PASS
 
 **Files:**
 - Create: `web/js/liste.js`
-- Modify: `web/js/uygulama.js` (listeyi bağla), `web/js/editor.js` (import zaten Task 7'de eklendi)
+- Modify: `web/js/uygulama.js` (listeyi bağla)
 
 **Interfaces:**
-- Consumes: `durum`/`guncelle` (`./durum.js`), `degisiklikBildir` (`./editor.js`)
+- Consumes: `api` (`./api.js`, `csvAyristir` çağrısı için), `durum`/`guncelle` (`./durum.js`), `degisiklikBildir` (`./editor.js`)
 - Produces: `listeyiBagla()`, `listeyiCiz()`
 - Satırları `durum.satirlar` / `durum.satirGecerli` üzerinden yazar; `editor.js` oradan okur (import yönü tek: liste → editor)
 
 - [ ] **Step 1: `web/js/liste.js` yaz**
 
 ```js
-import { degisiklikBildir } from './editor.js';
+import { api } from './api.js';
 import { durum, guncelle } from './durum.js';
+import { degisiklikBildir } from './editor.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -2997,10 +3221,16 @@ function satirlariYaz(yeni, gecerli = true) {
   guncelle({ satirlar: yeni, satirGecerli: gecerli });
 }
 
-/** CSV modunda ayrıştırmayı dener; başarısızsa durumu geçersiz işaretler. */
-function csvdenTazele() {
+/**
+ * CSV modunda ayrıştırmayı sunucuya yaptırır; başarısızsa durumu geçersiz
+ * işaretler ve hata mesajını döner. Ayrıştırma tarayıcıda tekrarlanmıyor:
+ * iki kopya zamanla ayrışır ve kullanıcının CSV'si tarayıcıda geçip sunucuda
+ * reddedilirdi.
+ */
+async function csvdenTazele() {
   try {
-    satirlariYaz(csvAyristir($('csvAlani').value), true);
+    const sonuc = await api.csvAyristir($('csvAlani').value);
+    satirlariYaz(sonuc.satirlar, true);
     return null;
   } catch (hata) {
     guncelle({ satirGecerli: false });
@@ -3008,50 +3238,11 @@ function csvdenTazele() {
   }
 }
 
-/** `metin,dosya_adi` — tırnaklı alan destekli. Başlık satırı isteğe bağlı. */
-function csvAyristir(icerik) {
-  const cikan = [];
-  const gorulen = new Set();
-
-  for (const [sira, ham] of icerik.split(/\r?\n/).entries()) {
-    if (ham.trim() === '') continue;
-
-    const alanlar = csvSatiriAyir(ham);
-    if (sira === 0 && alanlar[0]?.trim().toLowerCase() === 'metin') continue;
-
-    const metin = (alanlar[0] ?? '').trim();
-    const dosyaAdi = (alanlar[1] ?? '').trim().replace(/\.png$/i, '');
-    if (metin === '' || dosyaAdi === '') {
-      throw new Error(`${sira + 1}. satır: metin ve dosya_adi boş olamaz`);
-    }
-    if (gorulen.has(dosyaAdi)) {
-      throw new Error(`${sira + 1}. satır: "${dosyaAdi}" tekrar ediyor`);
-    }
-    gorulen.add(dosyaAdi);
-    cikan.push({ metin, dosyaAdi });
-  }
-  return cikan;
-}
-
-function csvSatiriAyir(satir) {
-  const alanlar = [];
-  let alan = '';
-  let tirnakta = false;
-
-  for (let i = 0; i < satir.length; i++) {
-    const karakter = satir[i];
-    if (tirnakta) {
-      if (karakter === '"' && satir[i + 1] === '"') { alan += '"'; i++; }
-      else if (karakter === '"') tirnakta = false;
-      else alan += karakter;
-    } else if (karakter === '"') tirnakta = true;
-    else if (karakter === ',') { alanlar.push(alan); alan = ''; }
-    else alan += karakter;
-  }
-  alanlar.push(alan);
-  return alanlar;
-}
-
+/**
+ * Satırları CSV metnine çevirir. Bu yön (serileştirme) tarayıcıda kalıyor:
+ * ayrıştırma kurallarının aksine tek satırlık kaçış mantığı, sunucuya gidip
+ * gelmeye değmez.
+ */
 function csveCevir(kayitlar) {
   const kacis = (alan) => (/[",\n]/.test(alan) ? `"${alan.replaceAll('"', '""')}"` : alan);
   return ['metin,dosya_adi', ...kayitlar.map((s) => `${kacis(s.metin)},${kacis(s.dosyaAdi)}`)]
@@ -3178,7 +3369,7 @@ async function bildir() {
   const uyari = $('satirUyari');
 
   if (csvModu) {
-    const hata = csvdenTazele();
+    const hata = await csvdenTazele();
     uyari.hidden = hata === null;
     uyari.textContent = hata === null ? '' : `CSV geçersiz — ${hata}`;
   } else {
@@ -3200,12 +3391,12 @@ export function listeyiBagla() {
     modKabuguCiz();
   });
 
-  $('btnCsvModu').addEventListener('click', () => {
+  $('btnCsvModu').addEventListener('click', async () => {
     if (!csvModu) {
       $('csvAlani').value = csveCevir(satirlar());
       csvModu = true;
     } else {
-      const hata = csvdenTazele();
+      const hata = await csvdenTazele();
       if (hata !== null) {
         // CSV geçersizken tabloya dönmek veriyi kaybettirir
         $('satirUyari').hidden = false;
