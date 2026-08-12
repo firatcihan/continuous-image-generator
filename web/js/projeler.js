@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { durum, guncelle, projeCalisiyorMu } from './durum.js';
+import { galeriyiYukle } from './galeri.js';
 import { bekleyeniBosalt } from './kaydet.js';
 
 const $ = (id) => document.getElementById(id);
@@ -18,6 +19,10 @@ async function projeUygula(proje) {
     hata: null,
   });
   if (location.hash !== `#/proje/${proje.id}`) location.hash = `#/proje/${proje.id}`;
+  // Galeri burada yükleniyor, `projeSec`'in gövdesinde değil: kurtarma yolu da
+  // (404 sonrası ilk projeye düşme) buradan geçiyor, yoksa o yolda galeri
+  // silinmiş projenin görselleriyle ekranda kalırdı.
+  await galeriyiYukle(proje.id);
 }
 
 /** Aktif projeyi yükler ve hash'i eşitler. id null ise boş duruma geçer. */
@@ -26,7 +31,8 @@ export async function projeSec(id) {
   // değiştirirken değişiklik kaybolmasın.
   await bekleyeniBosalt();
   if (id === null) {
-    guncelle({ aktifProje: null, galeri: { dosyalar: [], toplamBayt: 0 } });
+    guncelle({ aktifProje: null });
+    await galeriyiYukle(null);
     return;
   }
   try {
