@@ -8,6 +8,17 @@ export async function projeleriYukle() {
   guncelle({ projeler: liste.projeler, bozukSayisi: liste.bozukSayisi });
 }
 
+/** Satırlar ayrı tutulur: liste.js onları düzenler, editor.js oradan okur. */
+async function projeUygula(proje) {
+  guncelle({
+    aktifProje: proje,
+    satirlar: proje.satirlar.map((s) => ({ ...s })),
+    satirGecerli: true,
+    hata: null,
+  });
+  if (location.hash !== `#/proje/${proje.id}`) location.hash = `#/proje/${proje.id}`;
+}
+
 /** Aktif projeyi yükler ve hash'i eşitler. id null ise boş duruma geçer. */
 export async function projeSec(id) {
   if (id === null) {
@@ -15,21 +26,28 @@ export async function projeSec(id) {
     return;
   }
   try {
-    const proje = await api.proje(id);
-    // Satırlar ayrı tutulur: liste.js onları düzenler, editor.js oradan okur
-    guncelle({
-      aktifProje: proje,
-      satirlar: proje.satirlar.map((s) => ({ ...s })),
-      satirGecerli: true,
-      hata: null,
-    });
-    if (location.hash !== `#/proje/${id}`) location.hash = `#/proje/${id}`;
+    await projeUygula(await api.proje(id));
   } catch (hata) {
-    // Bilinmeyen id (404): hash'i temizle, ilk projeye düş
+    // Bilinmeyen id (404): hash'i temizle, listeyi TAZELEYİP tek seferlik
+    // ilk projeye düş. Listeyi tazelemeden düşersek ve o "ilk" proje de
+    // sunucuda yoksa (başka bir sekmede silinmiş, ya da diskten kaybolmuş
+    // olabilir), `durum.projeler` hiç değişmediği için "ilk proje" hep aynı
+    // geçersiz id kalır — `projeSec`'i burada yeniden çağırmak sınırsız,
+    // geri kapamasız bir döngüye (API'yi durmadan dövme) girerdi. Bu yüzden
+    // ikinci deneme `projeSec`'e rekürsif dönmüyor: tek bir düz deneme
+    // yapılıyor, o da başarısız olursa boş duruma (aktifProje: null, hash
+    // yok) iniliyor ve `durum.hata` kullanıcının anlayabileceği bir mesajla
+    // dolu kalıyor.
     guncelle({ aktifProje: null, hata: hata.message });
     location.hash = '';
+    await projeleriYukle();
     const ilk = durum.projeler[0];
-    if (ilk) await projeSec(ilk.id);
+    if (ilk === undefined) return;
+    try {
+      await projeUygula(await api.proje(ilk.id));
+    } catch (ikinciHata) {
+      guncelle({ aktifProje: null, hata: ikinciHata.message });
+    }
   }
 }
 
@@ -115,7 +133,10 @@ export function projeleriCiz() {
  * yeniden çizim) DOM'dan koparıldığı durumu yakalar: o zaman girdi hâlâ
  * `kapandi = false` olabilir ama artık belgede değildir — bu durumda
  * gönderim yapmadan çıkarız, metin yukarıdaki "açık girdiyi koru" mantığıyla
- * yeni bir satırda korunur.
+ * yeni bir satırda korunur. Aynı kopma, gönderim SIRASINDA (`api.projeOlustur`
+ * beklerken) de olabilir — `olustur()`'ün `catch` bloğu bu durumu ayrıca ele
+ * alır: orijinal `girdi` artık belgede değilse ona `focus()` çağırmak yerine
+ * taze bir satır açıp yazılan adı oraya taşır.
  */
 export function yeniProjeSatiriAc() {
   const kap = $('projeListesi');
@@ -154,9 +175,22 @@ export function yeniProjeSatiriAc() {
       await projeSec(proje.id);
     } catch (hata) {
       guncelle({ hata: hata.message });
-      kapandi = false;
-      girdi.disabled = false;
-      girdi.focus();
+      if (girdi.isConnected) {
+        kapandi = false;
+        girdi.disabled = false;
+        girdi.focus();
+      } else {
+        // `await api.projeOlustur` beklerken ARADA ilgisiz bir guncelle()
+        // (ör. kullanıcı başka bir projeye tıkladı) projeleriCiz()'i tetiklemiş
+        // ve bu satırı (disabled olduğu için "kapalı" sayılıp) DOM'dan
+        // koparmış olabilir. Böyle bir durumda kopmuş `girdi`'ye
+        // disabled=false/focus() yapmak sessiz bir no-op'tur (kopmuş düğüm
+        // odak alamaz) — kullanıcı hiçbir şey görmeden yazdığı ad kaybolurdu.
+        // Bunun yerine taze bir satır açıp yazılan adı oraya geri koyuyoruz.
+        yeniProjeSatiriAc();
+        const yeni = $('projeListesi').querySelector('.yeni-proje-girdisi');
+        if (yeni !== null) yeni.value = ad;
+      }
     }
   };
 
