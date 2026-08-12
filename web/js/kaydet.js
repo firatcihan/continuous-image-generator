@@ -23,6 +23,26 @@ let bekleyen = null;
 let devamEden = null;
 
 /**
+ * "Kuşak" sayacı — kullanıcının en son bıraktığı forma mı, yoksa artık
+ * ekrandan kaybolmuş DAHA ESKİ bir forma mı ait olduğunu ayırt etmek için.
+ * Hem yeni bir kayıt planlandığında (`kaydetmeyiPlanla`) hem de bir alan
+ * geçersiz olduğunda (`gecersizIsaretle`) artar — ikisi de "kullanıcı formu
+ * değiştirdi" anlamına gelir.
+ *
+ * Neden gerekli: bir yazma isteği sonuçlandığında (`yaz`), o istek ATILDIĞI
+ * ANDAKİ form durumunu anlatır. Ağ isteği sürerken kullanıcı forma dokunmuş
+ * olabilir (yeni bir düzenleme yapmış ya da alanı geçersiz hale getirmiş
+ * olabilir) — bu durumda sonuçlanan istek artık kullanıcının O AN gördüğü
+ * durumdan DAHA ESKİ bir anı anlatıyor demektir. Yalnızca GÖSTERGE alanları
+ * (`kaydetDurumu`/`kaydetZamani`/`hata`) bu sayaç değişmemişse yazılır;
+ * `aktifProje` her zaman birleştirilir (sunucunun damgaladığı
+ * `guncellemeTarihi` kaybolmasın diye) ama bu birleştirme yalnızca `id`
+ * değişmediği sürece hiçbir alan değerini yeniden yazmayan `editoruCiz`'in
+ * `cizilenProjeId` koruması sayesinde güvenlidir.
+ */
+let surum = 0;
+
+/**
  * Otomatik kaydetme. Açık "Kaydet" butonu çok projede veri kaybı tuzağıydı:
  * düzenle → başka projeye tıkla → değişiklik sessizce giderdi.
  *
@@ -31,6 +51,7 @@ let devamEden = null;
  */
 export function kaydetmeyiPlanla(proje) {
   bekleyen = proje;
+  surum++;
   if (zamanlayici !== null) clearTimeout(zamanlayici);
   zamanlayici = setTimeout(() => void bekleyeniBosalt(), GECIKME_MS);
 }
@@ -57,18 +78,41 @@ export async function bekleyeniBosalt() {
 }
 
 async function yaz(proje) {
+  // Bu yazma isteğinin ait olduğu kuşak — istek sonuçlandığında hâlâ
+  // güncel mi diye buna bakılacak.
+  const buSurum = surum;
+
   guncelle({ kaydetDurumu: 'kaydediliyor' });
   try {
     const yazilan = await api.projeKaydet(proje.id, proje);
-    guncelle({
-      aktifProje: yazilan,
-      kaydetDurumu: 'kaydedildi',
-      kaydetZamani: new Date().toLocaleTimeString('tr-TR'),
-      hata: null,
-    });
+    if (buSurum === surum) {
+      // Aradan yeni bir kullanıcı girdisi geçmedi: bu yazma hâlâ ekranda
+      // görünen en güncel form durumunu anlatıyor, gösterge güncellenebilir.
+      guncelle({
+        aktifProje: yazilan,
+        kaydetDurumu: 'kaydedildi',
+        kaydetZamani: new Date().toLocaleTimeString('tr-TR'),
+        hata: null,
+      });
+    } else {
+      // Kullanıcı bu yazma sürerken forma dokundu (yeni bir kayıt planladı
+      // ya da alanı geçersiz yaptı) — gösterge artık ONUN durumuna ait,
+      // bu ESKİ yazmanın "kaydedildi" damgasıyla ezilmemeli. Yine de
+      // sunucunun döndürdüğü `guncellemeTarihi` kaybolmasın diye
+      // `aktifProje` birleştiriliyor; bu güvenli çünkü `editoruCiz`
+      // yalnızca proje `id`si değiştiğinde alan değeri yazıyor (id burada
+      // değişmedi), yani kullanıcının o an yazmakta olduğu karakterlere
+      // dokunulmuyor.
+      guncelle({ aktifProje: yazilan });
+    }
     await projeleriYukle(); // sol paneldeki ad ve satır sayısı tazelenir
   } catch (hata) {
-    guncelle({ kaydetDurumu: 'gecersiz', hata: hata.message });
+    // Aynı mantık ters yönde: bu yazma artık eskiyse, başarısızlığı da
+    // göstergeye yazma — daha yeni bir "geçersiz" ya da (bir sonraki yazma
+    // sonuçlandığında) "kaydedildi" durumunun üstüne binmesin.
+    if (buSurum === surum) {
+      guncelle({ kaydetDurumu: 'gecersiz', hata: hata.message });
+    }
   }
 }
 
@@ -78,5 +122,6 @@ export function gecersizIsaretle(sebep) {
     zamanlayici = null;
   }
   bekleyen = null;
+  surum++;
   guncelle({ kaydetDurumu: 'gecersiz', hata: sebep });
 }

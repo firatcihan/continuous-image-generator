@@ -162,10 +162,12 @@ function ayarlariCiz(proje) {
   klasorGirdi.type = 'text';
   klasorGirdi.id = 'ayar-ciktiKlasoru';
   klasorGirdi.value = proje.ciktiKlasoru;
+  klasorEtiket.htmlFor = klasorGirdi.id;
   kap.append(klasorEtiket, klasorGirdi);
 
   const beklemeEtiket = document.createElement('label');
   beklemeEtiket.textContent = 'Satır arası bekleme (sn, min – maks)';
+  beklemeEtiket.htmlFor = 'ayar-beklemeMin'; // iki alanlı satır: etiket min'e işaret eder
   kap.append(beklemeEtiket);
   const beklemeKap = document.createElement('div');
   beklemeKap.className = 'satir';
@@ -191,6 +193,7 @@ function ayarlariCiz(proje) {
     girdi.id = `ayar-${alan.anahtar}`;
     if (alan.tur === 'number') girdi.min = '1';
     girdi.value = String(proje.ayarlar[alan.anahtar]);
+    etiket.htmlFor = girdi.id;
     kap.append(etiket, girdi);
   }
 
