@@ -146,6 +146,14 @@ body { display: flex; min-height: 100vh; }
 .kolon section + section { margin-top: 0; }
 
 button.kucuk { float: right; font-size: 12px; padding: 4px 9px; font-weight: 500; }
+
+/* Tablo / CSV / Script anahtarı — kap float ediyor, düğmeler kendi içinde sırada */
+.mod-anahtari { float: right; display: inline-flex; gap: 4px; }
+.mod-anahtari button { float: none; }
+.mod-anahtari button.aktif {
+  background: color-mix(in srgb, var(--vurgu) 16%, transparent);
+  border-color: var(--vurgu); color: var(--vurgu);
+}
 .soluk { font-size: 13px; color: var(--soluk); }
 .onizleme { margin: 0; padding-left: 22px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
 .onizleme li { margin: 3px 0; color: var(--soluk); }

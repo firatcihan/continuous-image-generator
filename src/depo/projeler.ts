@@ -28,6 +28,11 @@ export interface Proje {
   basePrompt: string;
   ciktiKlasoru: string;
   satirlar: Satir[];
+  /**
+   * Satırların üretildiği zaman damgalı ham script. Üretime girmez; kullanıcı
+   * script'i düzeltip yeniden çevirebilsin diye saklanıyor.
+   */
+  script: string;
   ayarlar: Ayarlar;
   olusturmaTarihi: string;
   guncellemeTarihi: string;
@@ -71,6 +76,7 @@ export function yeniProje(id: string, ad: string, ciktiKoku: string): Proje {
     basePrompt: 'Bir kedi, {VARYASYON}, yüksek detaylı',
     ciktiKlasoru: join(ciktiKoku, slugla(ad)),
     satirlar: [],
+    script: '',
     ayarlar: { ...VARSAYILAN_AYARLAR },
     olusturmaTarihi: '',
     guncellemeTarihi: '',
@@ -97,6 +103,8 @@ export function projeDogrula(ham: unknown, ciktiKoku: string): Proje {
     basePrompt: metinAlan(kaynak.basePrompt, varsayilan.basePrompt),
     ciktiKlasoru,
     satirlar: satirlariDogrula(kaynak.satirlar),
+    // Eski proje dosyalarında bu alan yok; `metinAlan` varsayılanı göç yerine geçer.
+    script: metinAlan(kaynak.script, ''),
     ayarlar: ayarlariDogrula(kaynak.ayarlar),
     olusturmaTarihi: metinAlan(kaynak.olusturmaTarihi, ''),
     guncellemeTarihi: metinAlan(kaynak.guncellemeTarihi, ''),

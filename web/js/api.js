@@ -54,6 +54,8 @@ export const api = {
   // CSV ayrıştırma sunucuda; tarayıcıda ikinci bir ayrıştırıcı tutulmuyor
   csvAyristir: (icerik) =>
     istek('/api/csv/ayristir', { method: 'POST', body: JSON.stringify({ icerik }) }),
+  scriptAyristir: (icerik) =>
+    istek('/api/script/ayristir', { method: 'POST', body: JSON.stringify({ icerik }) }),
 };
 
 /** Görsel URL'si — <img src> için. */

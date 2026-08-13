@@ -7,6 +7,7 @@ import { gercekYolIcerdeMi, icerdeMi } from '../depo/yollar.js';
 import type { IsYoneticisi } from '../is/isYoneticisi.js';
 import { satirlariAyristir } from '../liste.js';
 import { onizlemeUret, yerTutucuVarMi } from '../prompt.js';
+import { scriptiSatirlaraCevir } from '../script.js';
 import type { Satir } from '../tipler.js';
 import { cookieTokenOku, istekYetkili } from './guvenlik.js';
 
@@ -327,6 +328,21 @@ export function sunucuOlustur(b: SunucuBagimliliklari): FastifyInstance {
     }
     try {
       return { satirlar: satirlariAyristir(govde.icerik) };
+    } catch (hata) {
+      return yanit.code(400).send({ hata: (hata as Error).message });
+    }
+  });
+
+  // Script ayrıştırma da sunucuda: CSV'yle aynı gerekçe — tarayıcıdaki ikinci
+  // bir kopya zamanla ayrışır ve kullanıcının script'i tarayıcıda geçip
+  // sunucuda reddedilirdi.
+  uygulama.post('/api/script/ayristir', async (istek, yanit) => {
+    const govde = (istek.body ?? {}) as { icerik?: unknown };
+    if (typeof govde.icerik !== 'string') {
+      return yanit.code(400).send({ hata: 'icerik metni gerekli' });
+    }
+    try {
+      return { satirlar: scriptiSatirlaraCevir(govde.icerik) };
     } catch (hata) {
       return yanit.code(400).send({ hata: (hata as Error).message });
     }

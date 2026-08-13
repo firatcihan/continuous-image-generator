@@ -55,12 +55,19 @@
 
       <section>
         <h2>Satırlar <span id="satirSayisi" class="soluk"></span>
-          <button id="btnCsvModu" class="kucuk">CSV olarak düzenle</button>
+          <span class="mod-anahtari">
+            <button id="btnModTablo" class="kucuk">Tablo</button>
+            <button id="btnModCsv" class="kucuk">CSV</button>
+            <button id="btnModScript" class="kucuk">Script</button>
+          </span>
         </h2>
         <div id="tabloKabi"></div>
         <textarea id="csvAlani" class="kod" rows="10" hidden></textarea>
+        <textarea id="scriptAlani" class="kod" rows="10" hidden
+          placeholder="(0:00) Bugün hava durumundan bahsedeceğiz. Öğleden (0:09) sonra sıcaklık yükseldi."></textarea>
         <p class="uyari-metin" id="satirUyari" hidden></p>
         <button id="btnSatirEkle">Satır ekle</button>
+        <button id="btnCevir" class="birincil" hidden>Satırlara çevir</button>
       </section>
 
       <!--
@@ -117,6 +124,19 @@
   <div class="diyalog-butonlar">
     <button id="silVazgec">Vazgeç</button>
     <button id="silOnayla" class="tehlike">Sil</button>
+  </div>
+</dialog>
+
+<!--
+  Gövde DIŞINDA: çalışan projede `#btnCevir` `.kilitli` kuralıyla sönük olduğu
+  için diyalog hiç açılamaz; `#projeEkrani` içinde durmasına gerek yok.
+-->
+<dialog id="cevirDiyalogu">
+  <h2>Satırların üzerine yazılsın mı?</h2>
+  <p id="cevirMesaj"></p>
+  <div class="diyalog-butonlar">
+    <button id="cevirVazgec">Vazgeç</button>
+    <button id="cevirOnayla" class="birincil">Devam</button>
   </div>
 </dialog>
 

@@ -23,6 +23,7 @@ export function formdanProje() {
   return {
     ...temel,
     basePrompt: $('basePrompt').value,
+    script: $('scriptAlani').value,
     ciktiKlasoru: $('ayar-ciktiKlasoru').value.trim(),
     // Satırların tek gerçek kaynağı durum.js; liste.js yazar, burası okur
     satirlar: durum.satirGecerli ? durum.satirlar.map((s) => ({ ...s })) : null,
@@ -132,6 +133,7 @@ export function editoruCiz() {
 
   if (cizilenProjeId !== proje.id) {
     $('basePrompt').value = proje.basePrompt;
+    $('scriptAlani').value = proje.script;
     ayarlariCiz(proje);
     cizilenProjeId = proje.id;
     void onizlemeyiTazele(formdanProje());

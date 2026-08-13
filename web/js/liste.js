@@ -4,8 +4,8 @@ import { degisiklikBildir } from './editor.js';
 
 const $ = (id) => document.getElementById(id);
 
-/** Tablo mu CSV mi düzenleniyor. */
-let csvModu = false;
+/** 'tablo' | 'csv' | 'script' — hangi düzenleyici açık. */
+let mod = 'tablo';
 
 /**
  * CSV ayrıştırma "kuşak" sayacı. Her tuş vuruşu sunucuya bir ayrıştırma
@@ -76,17 +76,24 @@ export function listeyiCiz() {
   // proje kimliği değiştiyse iç veri baştan yüklenir.
   if ($('tabloKabi').dataset.projeId !== durum.aktifProje.id) {
     $('tabloKabi').dataset.projeId = durum.aktifProje.id;
-    csvModu = false;
+    mod = 'tablo';
     tabloyuCiz();
   }
   modKabuguCiz();
 }
 
 function modKabuguCiz() {
-  $('tabloKabi').hidden = csvModu;
-  $('csvAlani').hidden = !csvModu;
-  $('btnSatirEkle').hidden = csvModu;
-  $('btnCsvModu').textContent = csvModu ? 'Tablo olarak düzenle' : 'CSV olarak düzenle';
+  $('tabloKabi').hidden = mod !== 'tablo';
+  $('csvAlani').hidden = mod !== 'csv';
+  $('scriptAlani').hidden = mod !== 'script';
+  $('btnSatirEkle').hidden = mod !== 'tablo';
+  $('btnCevir').hidden = mod !== 'script';
+
+  for (const [dugme, deger] of [
+    ['btnModTablo', 'tablo'], ['btnModCsv', 'csv'], ['btnModScript', 'script'],
+  ]) {
+    $(dugme).classList.toggle('aktif', mod === deger);
+  }
   $('satirSayisi').textContent = `(${satirlar().length})`;
 }
 
@@ -202,7 +209,7 @@ function isaretleriTazele() {
 async function bildir() {
   const uyari = $('satirUyari');
 
-  if (csvModu) {
+  if (mod === 'csv') {
     const sonuc = await csvdenTazele();
     // Daha yeni bir ayrıştırma başlamış: uyarıyı da kaydetmeyi de ona bırak.
     if (sonuc.durum === 'eski') return;
@@ -221,6 +228,58 @@ async function bildir() {
   await degisiklikBildir();
 }
 
+/**
+ * Script'i satırlara çevirir. Ayrıştırma sunucuda; hata durumunda mevcut
+ * satırlara DOKUNULMAZ — kısmi yazma yok, ya hepsi ya hiçbiri.
+ */
+async function cevir() {
+  const uyari = $('satirUyari');
+  let yeni;
+  try {
+    const sonuc = await api.scriptAyristir($('scriptAlani').value);
+    yeni = sonuc.satirlar;
+  } catch (hata) {
+    uyari.hidden = false;
+    uyari.textContent = `Script çevrilemedi — ${hata.message}`;
+    return;
+  }
+
+  const mevcut = satirlar().length;
+  if (mevcut > 0 && !(await onayAl(mevcut, yeni.length))) return;
+
+  uyari.hidden = true;
+  uyari.textContent = '';
+  satirlariYaz(yeni, true);
+  mod = 'tablo';
+  tabloyuCiz();
+  modKabuguCiz();
+  void bildir();
+}
+
+/** Dolu listenin üzerine yazmadan önce onay — kaza ile elle girilmiş satır kaybolmasın. */
+function onayAl(mevcut, gelen) {
+  const diyalog = $('cevirDiyalogu');
+  $('cevirMesaj').textContent =
+    `${mevcut} satır silinip ${gelen} yeni satırla değiştirilecek.`;
+
+  return new Promise((coz) => {
+    // Dinleyiciler her açılışta yeniden bağlanıp kapanışta sökülüyor: kalıcı
+    // olsalar ikinci çevirmede eski promise'lar da tetiklenirdi.
+    const kapat = (sonuc) => {
+      diyalog.close();
+      $('cevirOnayla').removeEventListener('click', onayla);
+      $('cevirVazgec').removeEventListener('click', vazgec);
+      coz(sonuc);
+    };
+    const onayla = () => kapat(true);
+    const vazgec = () => kapat(false);
+
+    $('cevirOnayla').addEventListener('click', onayla);
+    $('cevirVazgec').addEventListener('click', vazgec);
+    diyalog.showModal();
+  });
+}
+
 export function listeyiBagla() {
   $('btnSatirEkle').addEventListener('click', () => {
     satirlariYaz([...satirlar(), { metin: '', dosyaAdi: '' }], true);
@@ -232,26 +291,38 @@ export function listeyiBagla() {
     void bildir();
   });
 
-  $('btnCsvModu').addEventListener('click', async () => {
-    if (!csvModu) {
-      $('csvAlani').value = csveCevir(satirlar());
-      csvModu = true;
-    } else {
+  /**
+   * Mod değiştirir. CSV'den ÇIKARKEN ayrıştırma başarısızsa mod değişmez:
+   * geçersiz CSV'yi bırakıp gitmek kullanıcının yazdığı satırları kaybettirir.
+   */
+  async function moduDegistir(hedef) {
+    if (hedef === mod) return;
+
+    if (mod === 'csv') {
       const sonuc = await csvdenTazele();
       if (sonuc.durum === 'eski') return;
       if (sonuc.durum === 'hata') {
-        // CSV geçersizken tabloya dönmek veriyi kaybettirir
         $('satirUyari').hidden = false;
         $('satirUyari').textContent =
-          `CSV geçersiz — tabloya dönmeden önce düzeltin (${sonuc.mesaj})`;
+          `CSV geçersiz — moddan çıkmadan önce düzeltin (${sonuc.mesaj})`;
         return;
       }
-      csvModu = false;
-      tabloyuCiz();
     }
+
+    mod = hedef;
+    if (mod === 'csv') $('csvAlani').value = csveCevir(satirlar());
+    if (mod === 'tablo') tabloyuCiz();
     modKabuguCiz();
     void bildir();
-  });
+  }
+
+  $('btnModTablo').addEventListener('click', () => void moduDegistir('tablo'));
+  $('btnModCsv').addEventListener('click', () => void moduDegistir('csv'));
+  $('btnModScript').addEventListener('click', () => void moduDegistir('script'));
+
+  $('btnCevir').addEventListener('click', () => void cevir());
 
   $('csvAlani').addEventListener('input', () => void bildir());
+  // Script alanı satırlara DOKUNMAZ; yalnızca projeye kaydedilir.
+  $('scriptAlani').addEventListener('input', () => void degisiklikBildir());
 }

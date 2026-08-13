@@ -311,3 +311,23 @@ describe('esZamanliSekme ayarı', () => {
   });
 });
 
+describe('script alanı', () => {
+  it('yazılıp okunur', () => {
+    const proje = depo.olustur('Kedi');
+    expect(proje.script).toBe('');
+
+    depo.yaz({ ...proje, script: '(0:00) merhaba (0:09) dünya' });
+    expect(depo.oku(proje.id)?.script).toBe('(0:00) merhaba (0:09) dünya');
+  });
+
+  it('script alanı olmayan eski dosyayı boş string ile okur', () => {
+    const proje = depo.olustur('Kedi');
+
+    const yol = join(kok, 'projeler', `${proje.id}.json`);
+    const ham = JSON.parse(readFileSync(yol, 'utf-8'));
+    delete ham.script;
+    writeFileSync(yol, JSON.stringify(ham), 'utf-8');
+
+    expect(depo.oku(proje.id)?.script).toBe('');
+  });
+});
