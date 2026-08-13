@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "baslat": "tsx src/main.ts",
+    "baslat": "tsx src/baslat.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "fastify": "^5.11.3",
     "playwright": "^1.60.0"
   },
   "devDependencies": {

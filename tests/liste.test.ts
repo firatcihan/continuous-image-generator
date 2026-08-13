@@ -1,14 +1,5 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { csvAyristir, dosyaAdiTemizle, listeYukle } from '../src/liste.js';
-
-function listeDosyasiYaz(icerik: string): string {
-  const yol = join(mkdtempSync(join(tmpdir(), 'liste-')), 'liste.csv');
-  writeFileSync(yol, icerik, 'utf-8');
-  return yol;
-}
+import { csvAyristir, dosyaAdiTemizle, satirlariAyristir } from '../src/liste.js';
 
 describe('csvAyristir', () => {
   it('basit satırları ayrıştırır', () => {
@@ -30,24 +21,50 @@ describe('dosyaAdiTemizle', () => {
   });
 });
 
-describe('listeYukle', () => {
-  it('başlıklı CSV dosyasını Satir listesine çevirir', () => {
-    const yol = listeDosyasiYaz('metin,dosya_adi\nkar yağarken,dag_evi\nplajda,plaj\n');
-    expect(listeYukle(yol)).toEqual([
-      { metin: 'kar yağarken', dosyaAdi: 'dag_evi' },
-      { metin: 'plajda', dosyaAdi: 'plaj' },
+describe('satirlariAyristir', () => {
+  it('başlıklı CSV\'yi ayrıştırır', () => {
+    expect(satirlariAyristir('metin,dosya_adi\nkarda,a\nplajda,b\n')).toEqual([
+      { metin: 'karda', dosyaAdi: 'a' },
+      { metin: 'plajda', dosyaAdi: 'b' },
     ]);
   });
 
-  it('başlık sütunları eksikse hata fırlatır', () => {
-    expect(() => listeYukle(listeDosyasiYaz('a,b\nx,y\n'))).toThrow('metin,dosya_adi');
+  it('başlıksız CSV\'yi de ayrıştırır', () => {
+    expect(satirlariAyristir('karda,a\n')).toEqual([{ metin: 'karda', dosyaAdi: 'a' }]);
   });
 
-  it('boş metin veya dosya adı için satır numarasıyla hata fırlatır', () => {
-    expect(() => listeYukle(listeDosyasiYaz('metin,dosya_adi\n,bos\n'))).toThrow('2. satır');
+  it('sütun sırası başlıktan okunur', () => {
+    expect(satirlariAyristir('dosya_adi,metin\na,karda\n')).toEqual([
+      { metin: 'karda', dosyaAdi: 'a' },
+    ]);
   });
 
-  it('tekrar eden dosya adı için hata fırlatır', () => {
-    expect(() => listeYukle(listeDosyasiYaz('metin,dosya_adi\na,ayni\nb,ayni\n'))).toThrow('tekrar');
+  it('tırnaklı alanı ve .png uzantısını doğru ele alır', () => {
+    expect(satirlariAyristir('"kedi, karda",dag.png\n')).toEqual([
+      { metin: 'kedi, karda', dosyaAdi: 'dag' },
+    ]);
+  });
+
+  it('boş alanı ve tekrar eden dosya adını satır numarasıyla reddeder', () => {
+    expect(() => satirlariAyristir('metin,dosya_adi\n,bos\n')).toThrow('2. satır');
+    expect(() => satirlariAyristir('metin,dosya_adi\na,ayni\nb,ayni\n')).toThrow('tekrar');
+  });
+
+  it('boş metin için boş liste döner', () => {
+    expect(satirlariAyristir('')).toEqual([]);
+  });
+
+  it('ilk hücresi tam olarak "metin" olan bir veri satırını başlık sanmaz', () => {
+    expect(satirlariAyristir('metin,a\n')).toEqual([{ metin: 'metin', dosyaAdi: 'a' }]);
+  });
+
+  it('başlık iki sütun adını da içermiyorsa veri satırı sayılır', () => {
+    // "dosyaadi" (alt çizgisiz) yazım hatası kasıtlı olarak yakalanmıyor:
+    // bunu ayırt etmenin tek yolu tahmin etmek, ve yanlış bir tahmin
+    // yukarıdaki gibi tamamen geçerli bir veri satırını reddeder.
+    expect(satirlariAyristir('metin,dosyaadi\nkarda,a\n')).toEqual([
+      { metin: 'metin', dosyaAdi: 'dosyaadi' },
+      { metin: 'karda', dosyaAdi: 'a' },
+    ]);
   });
 });

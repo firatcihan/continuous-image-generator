@@ -1,9 +1,10 @@
 import { writeFileSync } from 'node:fs';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { uyu } from './bekleme.js';
+import { geciciHataAlgila } from './geciciHata.js';
 import { rateLimitAlgila } from './rateLimit.js';
 import { CHATGPT_URL, SECICILER } from './seciciler.js';
-import type { GorselSonucu, UretimTarayicisi } from './tipler.js';
+import type { GorselSonucu, UretimSekmesi, UretimTarayicisi } from './tipler.js';
 
 const RED_KALIPLARI = [
   /can('|’)?t (create|generate|help with) (that|this)/i,
@@ -16,7 +17,9 @@ const RED_KALIPLARI = [
 
 export class ChatgptTarayicisi implements UretimTarayicisi {
   private context: BrowserContext | null = null;
-  private page: Page | null = null;
+  private sayfalar: Page[] = [];
+  /** yenidenBaslat() aynı sayıda sekmeyi geri kurabilsin diye saklanır. */
+  private sekmeSayisi = 1;
 
   constructor(private profilYolu: string) {}
 
@@ -26,14 +29,65 @@ export class ChatgptTarayicisi implements UretimTarayicisi {
       viewport: null,
       args: ['--disable-blink-features=AutomationControlled'],
     });
-    this.page = this.context.pages()[0] ?? (await this.context.newPage());
-    await this.page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
+    const ilk = this.context.pages()[0] ?? (await this.context.newPage());
+    await ilk.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
+    this.sayfalar = [ilk];
+    // Çökme sonrası kurtarmada eski sekme sayısı geri kurulur; ilk açılışta
+    // sekmeSayisi 1 olduğu için bu çağrı bir şey yapmaz.
+    await this.sayfalariTamamla(this.sekmeSayisi);
   }
 
   async yenidenBaslat(): Promise<void> {
     await this.kapat().catch(() => {});
     await this.baslat();
   }
+
+  async sekmeleriHazirla(n: number): Promise<UretimSekmesi[]> {
+    this.sekmeSayisi = n;
+    await this.sayfalariTamamla(n);
+    return Array.from({ length: n }, (_, slot) => new ChatgptSekmesi(this, slot));
+  }
+
+  async kapat(): Promise<void> {
+    await this.context?.close();
+    this.context = null;
+    this.sayfalar = [];
+  }
+
+  /**
+   * `ChatgptSekmesi` için: slot'un GÜNCEL sayfası.
+   * Yeniden başlatma diziyi tazelediği için sekme tutamaçları geçerli kalır.
+   */
+  sayfaAl(slot: number): Page {
+    const sayfa = this.sayfalar[slot];
+    if (!sayfa) {
+      throw new Error(`sekme ${slot} hazır değil; önce sekmeleriHazirla() çağrılmalı`);
+    }
+    return sayfa;
+  }
+
+  private async sayfalariTamamla(n: number): Promise<void> {
+    const context = this.context;
+    if (!context) throw new Error('tarayıcı başlatılmadı; önce baslat() çağrılmalı');
+
+    while (this.sayfalar.length < n) {
+      const sayfa = await context.newPage();
+      await sayfa.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
+      this.sayfalar.push(sayfa);
+    }
+  }
+}
+
+/**
+ * Tek sekme tutamacı. Ham `Page` TUTMAZ: `yenidenBaslat()` bütün `Page`
+ * nesnelerini öldürüyor; slot dolaylaması sayesinde işçinin elindeki tutamaç
+ * çökme sonrasında da geçerli kalır.
+ */
+export class ChatgptSekmesi implements UretimSekmesi {
+  constructor(
+    private ana: ChatgptTarayicisi,
+    private slot: number,
+  ) {}
 
   async yeniSohbetAc(): Promise<void> {
     const sayfa = this.sayfa();
@@ -82,6 +136,12 @@ export class ChatgptTarayicisi implements UretimTarayicisi {
       if (RED_KALIPLARI.some((kalip) => kalip.test(kontrolMetni))) {
         return { tip: 'red', mesaj: kontrolMetni };
       }
+      // Rate limit ve içerik reddinden SONRA bakılır: o ikisinin kendi ele
+      // alınma yolu var. Burada yakalanmazsa üretim zaman aşımına kadar
+      // (varsayılan 180 sn) boşuna beklenirdi.
+      if (geciciHataAlgila(kontrolMetni)) {
+        return { tip: 'geciciHata', mesaj: kontrolMetni.slice(0, 300) };
+      }
 
       const uretimSuruyor = await sayfa
         .locator(SECICILER.durdurButonu)
@@ -122,15 +182,8 @@ export class ChatgptTarayicisi implements UretimTarayicisi {
     writeFileSync(hedefYol, veri);
   }
 
-  async kapat(): Promise<void> {
-    await this.context?.close();
-    this.context = null;
-    this.page = null;
-  }
-
   private sayfa(): Page {
-    if (!this.page) throw new Error('tarayıcı başlatılmadı; önce baslat() çağrılmalı');
-    return this.page;
+    return this.ana.sayfaAl(this.slot);
   }
 
   private async sonSohbetTuruMetni(): Promise<string> {
