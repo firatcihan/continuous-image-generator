@@ -31,6 +31,8 @@ export function akisiBaslat() {
 /** İşin bittiği durumlar — bunlarda tarayıcı kapanmış olabilir. */
 const UC_DURUMLAR = ['bitti', 'durduruldu', 'hata'];
 
+const bitenSayisi = (ozet) => ozet.basarili + ozet.atlanan + ozet.basarisiz;
+
 async function olayIsle(olay) {
   const is = { ...durum.is };
 
@@ -39,6 +41,7 @@ async function olayIsle(olay) {
       is.durum = olay.durum;
       is.projeId = olay.projeId;
       is.ozet = olay.ozet;
+      is.biten = bitenSayisi(olay.ozet);
       if (olay.durum !== 'limitBekliyor') is.kalanSn = null;
       if (olay.durum !== 'kullaniciBekliyor') is.mesaj = null;
       guncelle({ is, akisBagli: true });
@@ -50,6 +53,7 @@ async function olayIsle(olay) {
     case 'satirBasladi':
       is.sira = olay.sira;
       is.toplam = olay.toplam;
+      is.ucusta = [...is.ucusta, olay.dosyaAdi];
       guncelle({ is });
       kayitEkle(`${olay.sira}/${olay.toplam} ${olay.dosyaAdi} başladı`);
       return;
@@ -63,6 +67,12 @@ async function olayIsle(olay) {
       return;
 
     case 'satirBitti':
+      // Özet burada tazelenir: `durum` olayı yalnızca durum DEĞİŞİMİNDE gelir,
+      // bu yüzden sayaçlar koşu boyunca donuk kalıyordu.
+      is.ozet = olay.ozet;
+      is.biten = bitenSayisi(olay.ozet);
+      is.ucusta = is.ucusta.filter((ad) => ad !== olay.dosyaAdi);
+      guncelle({ is });
       kayitEkle(`${olay.sira}. satır: ${olay.sonuc}${olay.sebep ? ` (${olay.sebep})` : ''}`);
       return;
 
@@ -90,6 +100,8 @@ async function olayIsle(olay) {
 
     case 'bitti':
       is.ozet = olay.ozet;
+      is.biten = bitenSayisi(olay.ozet);
+      is.ucusta = [];
       guncelle({ is });
       kayitEkle(
         `bitti — ✓ ${olay.ozet.basarili}, atlanan ${olay.ozet.atlanan}, ✗ ${olay.ozet.basarisiz}`,

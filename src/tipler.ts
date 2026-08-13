@@ -9,6 +9,8 @@ export interface Config {
   uretimZamanAsimiSn: number;
   tekrarDenemeSayisi: number;
   rateLimitVarsayilanBeklemeDk: number;
+  /** Eş zamanlı sekme sayısı, 1-4. 1 = sıralı. */
+  esZamanliSekme: number;
 }
 
 export interface Satir {
@@ -24,15 +26,22 @@ export type GorselSonucu =
   | { tip: 'geciciHata'; mesaj: string }
   | { tip: 'zamanAsimi' };
 
+/** Chromium context'i — bütün sekmeler paylaşır. */
 export interface UretimTarayicisi {
   baslat(): Promise<void>;
   yenidenBaslat(): Promise<void>;
+  /** Sekme sayısını n'e tamamlar ve hepsinin tutamacını döndürür. */
+  sekmeleriHazirla(n: number): Promise<UretimSekmesi[]>;
+  kapat(): Promise<void>;
+}
+
+/** Tek sekme — tek bir işçiye aittir, paylaşılmaz. */
+export interface UretimSekmesi {
   yeniSohbetAc(): Promise<void>;
   oturumAcikMi(): Promise<boolean>;
   aktifModelAdi(): Promise<string>;
   gorselUret(prompt: string, zamanAsimiSn: number): Promise<GorselSonucu>;
   sonGorseliKaydet(hedefYol: string): Promise<void>;
-  kapat(): Promise<void>;
 }
 
 export interface IslemOzeti {

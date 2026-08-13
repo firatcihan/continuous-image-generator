@@ -18,6 +18,8 @@ export interface Ayarlar {
   uretimZamanAsimiSn: number;
   tekrarDenemeSayisi: number;
   rateLimitVarsayilanBeklemeDk: number;
+  /** Eş zamanlı sekme sayısı, 1-4. 1 = bugünkü sıralı davranış. */
+  esZamanliSekme: number;
 }
 
 export interface Proje {
@@ -59,6 +61,7 @@ export const VARSAYILAN_AYARLAR: Ayarlar = {
   uretimZamanAsimiSn: 180,
   tekrarDenemeSayisi: 3,
   rateLimitVarsayilanBeklemeDk: 15,
+  esZamanliSekme: 1,
 };
 
 export function yeniProje(id: string, ad: string, ciktiKoku: string): Proje {
@@ -110,6 +113,7 @@ export function projedenConfig(proje: Proje, chromeProfil: string): Config {
     uretimZamanAsimiSn: proje.ayarlar.uretimZamanAsimiSn,
     tekrarDenemeSayisi: proje.ayarlar.tekrarDenemeSayisi,
     rateLimitVarsayilanBeklemeDk: proje.ayarlar.rateLimitVarsayilanBeklemeDk,
+    esZamanliSekme: proje.ayarlar.esZamanliSekme,
   };
 }
 
@@ -140,7 +144,7 @@ function satirlariDogrula(ham: unknown): Satir[] {
 }
 
 /**
- * `Ayarlar`ın 5 alanını tek tek okur, `kaynak`'ı spread ETMEZ. Aksi halde
+ * `Ayarlar`ın 6 alanını tek tek okur, `kaynak`'ı spread ETMEZ. Aksi halde
  * HTTP gövdesinden gelen bilinmeyen alanlar diske birikirdi.
  */
 function ayarlariDogrula(ham: unknown): Ayarlar {
@@ -160,7 +164,21 @@ function ayarlariDogrula(ham: unknown): Ayarlar {
       kaynak.rateLimitVarsayilanBeklemeDk,
       'rateLimitVarsayilanBeklemeDk',
     ),
+    esZamanliSekme: sekmeSayisiDogrula(kaynak.esZamanliSekme),
   };
+}
+
+/**
+ * Üst sınır 4: ChatGPT görsel kotası hesap başına olduğu için daha fazla sekme
+ * hız kazandırmaz, yalnızca otomasyon imzasını büyütür.
+ */
+function sekmeSayisiDogrula(ham: unknown): number {
+  if (ham === undefined) return VARSAYILAN_AYARLAR.esZamanliSekme;
+
+  if (typeof ham !== 'number' || !Number.isInteger(ham) || ham < 1 || ham > 4) {
+    throw new Error('esZamanliSekme 1 ile 4 arasında tam sayı olmalı');
+  }
+  return ham;
 }
 
 function satirArasiBeklemeDogrula(ham: unknown): [number, number] {

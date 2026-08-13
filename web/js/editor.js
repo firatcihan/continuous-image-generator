@@ -10,6 +10,9 @@ const AYAR_ALANLARI = [
   { anahtar: 'uretimZamanAsimiSn', etiket: 'Üretim zaman aşımı (sn)', tur: 'number' },
   { anahtar: 'tekrarDenemeSayisi', etiket: 'Tekrar deneme sayısı', tur: 'number' },
   { anahtar: 'rateLimitVarsayilanBeklemeDk', etiket: 'Limit varsayılan bekleme (dk)', tur: 'number' },
+  { anahtar: 'esZamanliSekme', etiket: 'Eş zamanlı sekme', tur: 'number', maks: 4,
+    ipucu: '1 = sırayla. Yükseltmek üretimi hızlandırır, ama ChatGPT kotası hesap '
+      + 'başınadır — limit daha erken gelebilir.' },
 ];
 
 /** Formdaki her şeyi okuyup tam bir proje nesnesi kurar. */
@@ -29,6 +32,7 @@ export function formdanProje() {
       uretimZamanAsimiSn: Number($('ayar-uretimZamanAsimiSn').value),
       tekrarDenemeSayisi: Number($('ayar-tekrarDenemeSayisi').value),
       rateLimitVarsayilanBeklemeDk: Number($('ayar-rateLimitVarsayilanBeklemeDk').value),
+      esZamanliSekme: Number($('ayar-esZamanliSekme').value),
     },
   };
 }
@@ -43,6 +47,10 @@ function projeyiDogrula(proje) {
     if (!Number.isFinite(proje.ayarlar[alan]) || proje.ayarlar[alan] <= 0) {
       return `${alan} pozitif bir sayı olmalı`;
     }
+  }
+  const sekme = proje.ayarlar.esZamanliSekme;
+  if (!Number.isInteger(sekme) || sekme < 1 || sekme > 4) {
+    return 'Eş zamanlı sekme 1 ile 4 arasında tam sayı olmalı';
   }
   if (proje.satirlar === null) return 'Satır listesi geçersiz';
   if (proje.ciktiKlasoru === '') return 'Çıktı klasörü boş olamaz';
@@ -184,7 +192,7 @@ function ayarlariCiz(proje) {
   }
   kap.append(beklemeKap);
 
-  // Kalan dört alan yan yana: hepsi kısa değerler, tam genişlik istemiyor.
+  // Kalan alanlar yan yana: hepsi kısa değerler, tam genişlik istemiyor.
   const izgara = document.createElement('div');
   izgara.className = 'ayar-izgara';
   for (const alan of AYAR_ALANLARI) {
@@ -196,6 +204,7 @@ function ayarlariCiz(proje) {
     girdi.type = alan.tur;
     girdi.id = `ayar-${alan.anahtar}`;
     if (alan.tur === 'number') girdi.min = '1';
+    if (alan.maks !== undefined) girdi.max = String(alan.maks);
     girdi.value = String(proje.ayarlar[alan.anahtar]);
     etiket.htmlFor = girdi.id;
     hucre.append(etiket, girdi);

@@ -51,12 +51,21 @@ async function main(): Promise<void> {
       try {
         mkdirSync(proje.ciktiKlasoru, { recursive: true });
         await tarayiciAc();
-        if (!tarayici) throw new Error('tarayıcı açılamadı');
+        // Yerel sabit şart: `tarayici` daralması aşağıdaki kapanışa taşınmıyor.
+        const acikTarayici = tarayici;
+        if (!acikTarayici) throw new Error('tarayıcı açılamadı');
+
+        const config = projedenConfig(proje, profil);
+        // Kırpma: 2 satırlık projede 4 sekme açmanın anlamı yok.
+        const sekmeSayisi = Math.min(config.esZamanliSekme, Math.max(proje.satirlar.length, 1));
+        const sekmeler = await acikTarayici.sekmeleriHazirla(sekmeSayisi);
+
         const ozet = await isYoneticisi.baslat({
           projeId: proje.id,
-          config: projedenConfig(proje, profil),
+          config,
           satirlar: proje.satirlar,
-          tarayici,
+          sekmeler,
+          tarayiciYenidenBaslat: () => acikTarayici.yenidenBaslat(),
           logger,
           tamamlandiMi: (dosyaAdi) => tamamlandiMi(proje.ciktiKlasoru, dosyaAdi),
           basarisizKaydet: (satir, sebep) =>

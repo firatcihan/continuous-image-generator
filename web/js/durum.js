@@ -15,6 +15,9 @@ export const durum = {
     projeId: null,
     sira: 0,
     toplam: 0,
+    biten: 0,
+    /** Şu an üretimde olan dosya adları — paralelde tek "şu anki satır" yok. */
+    ucusta: [],
     ozet: { basarili: 0, atlanan: 0, basarisiz: 0 },
     kalanSn: null,
     mesaj: null,

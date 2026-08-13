@@ -1,7 +1,8 @@
 import type { Logger } from '../logger.js';
-import type { Config, IslemOzeti, Satir, UretimTarayicisi } from '../tipler.js';
+import type { Config, IslemOzeti, Satir, UretimSekmesi } from '../tipler.js';
 import { tumSatirlariIsle, type UykuSebebi } from '../worker.js';
-import { Kapi } from './kapi.js';
+import { Kapi, type IsKapilari } from './kapi.js';
+import { TekYurutuc } from './tekYurutuc.js';
 import type { IsDurumu, IsOlayi } from './olaylar.js';
 import { uyuKesintili, type UykuSecenekleri } from './uyku.js';
 
@@ -11,13 +12,18 @@ export interface IsBilgisi {
   ozet: IslemOzeti;
   sira: number;
   toplam: number;
+  /** basarili + atlanan + basarisiz. Paralelde `sira` anlamını yitirdi. */
+  biten: number;
+  /** Şu an üretimde olan satırların dosya adları. */
+  ucusta: string[];
 }
 
 export interface IsAyarlari {
   projeId: string;
   config: Config;
   satirlar: Satir[];
-  tarayici: UretimTarayicisi;
+  sekmeler: UretimSekmesi[];
+  tarayiciYenidenBaslat: () => Promise<void>;
   logger: Logger;
   tamamlandiMi: (dosyaAdi: string) => boolean;
   basarisizKaydet: (satir: Satir, sebep: string) => void;
@@ -27,6 +33,10 @@ export interface IsAyarlari {
 
 const BOS_OZET: IslemOzeti = { basarili: 0, atlanan: 0, basarisiz: 0 };
 
+function yeniKapilar(): IsKapilari {
+  return { limit: new Kapi(), kullanici: new Kapi(), yenidenBaslatma: new Kapi() };
+}
+
 /** Bir üretim işinin durum makinesi; olayları dinleyicilere yayınlar. */
 export class IsYoneticisi {
   private durumu: IsDurumu = 'bosta';
@@ -34,21 +44,34 @@ export class IsYoneticisi {
   private ozet: IslemOzeti = { ...BOS_OZET };
   private sira = 0;
   private toplam = 0;
+  private ucusta = new Set<string>();
 
   private kontrolcu = new AbortController();
   private kapi = new Kapi();
+  /**
+   * Üç koordinasyon çifti. `Kapi` "iş sürerken kimse yeni satır çekmesin",
+   * `TekYurutuc` "işi yalnızca bir işçi yapsın" der. Sarmalama burada durduğu
+   * için `worker.ts` tarafında koordinasyona dair hiç kod yok.
+   */
+  private kapilar: IsKapilari = yeniKapilar();
+  private limitYurutuc = new TekYurutuc();
+  private kullaniciYurutuc = new TekYurutuc();
+  private yenidenBaslatmaYurutuc = new TekYurutuc();
   private kullaniciCozucu: (() => void) | null = null;
   private dinleyiciler = new Set<(olay: IsOlayi) => void>();
   /** duraklat() öncesi durum; devam() bu duruma geri döner (calisiyor veya limitBekliyor). */
   private duraklatmaOncesiDurum: IsDurumu | null = null;
 
   bilgi(): IsBilgisi {
+    const ozet = { ...this.ozet };
     return {
       durum: this.durumu,
       projeId: this.projeId,
-      ozet: { ...this.ozet },
+      ozet,
       sira: this.sira,
       toplam: this.toplam,
+      biten: ozet.basarili + ozet.atlanan + ozet.basarisiz,
+      ucusta: [...this.ucusta],
     };
   }
 
@@ -62,12 +85,17 @@ export class IsYoneticisi {
 
     this.kontrolcu = new AbortController();
     this.kapi = new Kapi();
+    this.kapilar = yeniKapilar();
+    this.limitYurutuc = new TekYurutuc();
+    this.kullaniciYurutuc = new TekYurutuc();
+    this.yenidenBaslatmaYurutuc = new TekYurutuc();
     this.kullaniciCozucu = null;
     this.duraklatmaOncesiDurum = null;
     this.projeId = ayarlar.projeId;
     this.ozet = { ...BOS_OZET };
     this.sira = 0;
     this.toplam = ayarlar.satirlar.length;
+    this.ucusta.clear();
 
     const uyuMotoru = ayarlar.uyuMotoru ?? uyuKesintili;
 
@@ -80,9 +108,11 @@ export class IsYoneticisi {
       const ozet = await tumSatirlariIsle(
         {
           config: ayarlar.config,
-          tarayici: ayarlar.tarayici,
+          sekmeler: ayarlar.sekmeler,
+          tarayiciYenidenBaslat: () => this.yenidenBaslat(ayarlar.tarayiciYenidenBaslat),
           logger: ayarlar.logger,
           kontrol: { signal: this.kontrolcu.signal, kapi: this.kapi },
+          kapilar: this.kapilar,
           uyu: (ms, sebep) => this.uyuVeYayinla(uyuMotoru, ms, sebep),
           tamamlandiMi: ayarlar.tamamlandiMi,
           basarisizKaydet: ayarlar.basarisizKaydet,
@@ -90,6 +120,7 @@ export class IsYoneticisi {
           satirBasladi: (sira, toplam, satir) => {
             this.sira = sira;
             this.toplam = toplam;
+            this.ucusta.add(satir.dosyaAdi);
             this.yayinla({ tip: 'satirBasladi', sira, toplam, dosyaAdi: satir.dosyaAdi });
           },
           satirBitti: (sira, sonuc, sebep) => {
@@ -100,11 +131,21 @@ export class IsYoneticisi {
             else if (sonuc === 'atlandi') this.ozet.atlanan++;
             else this.ozet.basarisiz++;
 
-            if (sonuc === 'basarili') {
-              const satir = ayarlar.satirlar[sira - 1];
-              if (satir) this.yayinla({ tip: 'gorselHazir', dosyaAdi: satir.dosyaAdi });
+            const satir = ayarlar.satirlar[sira - 1];
+            const dosyaAdi = satir?.dosyaAdi ?? '';
+            this.ucusta.delete(dosyaAdi);
+
+            if (sonuc === 'basarili' && satir) {
+              this.yayinla({ tip: 'gorselHazir', dosyaAdi });
             }
-            this.yayinla({ tip: 'satirBitti', sira, sonuc, sebep });
+            this.yayinla({
+              tip: 'satirBitti',
+              sira,
+              dosyaAdi,
+              sonuc,
+              ozet: { ...this.ozet },
+              sebep,
+            });
           },
         },
         ayarlar.satirlar,
@@ -143,7 +184,11 @@ export class IsYoneticisi {
   durdur(): void {
     if (!this.calisiyorMu()) return;
     this.kontrolcu.abort();
-    this.kapi.ac(); // bekleyenler çözülsün ki döngü abort'u görebilsin
+    // Tüm kapılar açılsın ki bekleyen işçiler döngü başına dönüp abort'u görebilsin
+    this.kapi.ac();
+    this.kapilar.limit.ac();
+    this.kapilar.kullanici.ac();
+    this.kapilar.yenidenBaslatma.ac();
     this.kullaniciCozucu?.();
     this.kullaniciCozucu = null;
   }
@@ -166,26 +211,68 @@ export class IsYoneticisi {
     ms: number,
     sebep: UykuSebebi,
   ): Promise<void> {
-    const rateLimit = sebep === 'rateLimit';
-    if (rateLimit) this.durumDegistir('limitBekliyor');
     if (sebep === 'geciciHata') this.yayinla({ tip: 'geciciHata' });
 
-    await motor(ms, {
-      signal: this.kontrolcu.signal,
-      kapi: this.kapi,
-      tik: rateLimit
-        ? (kalanMs) => this.yayinla({ tip: 'limitBekleniyor', kalanSn: Math.round(kalanMs / 1000) })
-        : undefined,
-    });
-
-    if (rateLimit && this.durumu === 'limitBekliyor' && !this.kontrolcu.signal.aborted) {
-      this.durumDegistir('calisiyor');
+    if (sebep !== 'rateLimit') {
+      await motor(ms, { signal: this.kontrolcu.signal, kapi: this.kapi });
+      return;
     }
+
+    // N işçiden yalnızca biri uyur, diğerleri AYNI uykuya katılır; aksi halde
+    // 3 işçi × 15 dk 45 dk'ya serileşirdi. Kapı ise, uyku sürerken uçuştaki
+    // işini bitiren işçinin YENİ satır çekmesini engeller.
+    await this.limitYurutuc.yurut(async () => {
+      this.kapilar.limit.kapat();
+      this.durumDegistir('limitBekliyor');
+      try {
+        await motor(ms, {
+          signal: this.kontrolcu.signal,
+          kapi: this.kapi,
+          tik: (kalanMs) =>
+            this.yayinla({ tip: 'limitBekleniyor', kalanSn: Math.round(kalanMs / 1000) }),
+        });
+      } finally {
+        this.kapilar.limit.ac();
+      }
+
+      if (this.durumu === 'limitBekliyor' && !this.kontrolcu.signal.aborted) {
+        this.durumDegistir('calisiyor');
+      }
+    });
+  }
+
+  /**
+   * Tarayıcı çökmesinde: yalnızca ilk işçi gerçekten yeniden başlatır, sonraki
+   * çağrılar aynı işleme katılır. Kapı, döngü başında bekleyen işçilerin yeniden
+   * başlatma sürerken satır çekip boşuna deneme hakkı yakmasını önler.
+   */
+  private yenidenBaslat(hamYenidenBaslat: () => Promise<void>): Promise<void> {
+    return this.yenidenBaslatmaYurutuc.yurut(async () => {
+      this.kapilar.yenidenBaslatma.kapat();
+      try {
+        await hamYenidenBaslat();
+      } finally {
+        this.kapilar.yenidenBaslatma.ac();
+      }
+    });
   }
 
   private kullaniciyiBekle(mesaj: string): Promise<void> {
     if (this.kontrolcu.signal.aborted) return Promise.resolve();
 
+    // İlk gören kartı çıkarır; diğer işçiler AYNI beklemeye katılır — N ayrı
+    // "giriş yapın" kartı çıkmaz. Kullanıcı bir kez onaylayınca hepsi çözülür.
+    return this.kullaniciYurutuc.yurut(async () => {
+      this.kapilar.kullanici.kapat();
+      try {
+        await this.tekKullaniciBeklemesi(mesaj);
+      } finally {
+        this.kapilar.kullanici.ac();
+      }
+    });
+  }
+
+  private tekKullaniciBeklemesi(mesaj: string): Promise<void> {
     // Resolver, HERHANGİ bir olay yayınlanmadan ÖNCE atanmalı. Aksi halde senkron bir
     // dinleyici bu olaylara durdur()/kullaniciHazir() ile senkron yanıt verirse
     // (kullaniciCozucu henüz null olduğundan) hiçbir şey çözemez ve döndürülen promise

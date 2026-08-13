@@ -233,15 +233,16 @@ function isCalistir(uygulama: ReturnType<typeof sunucuOlustur>, projeId: string)
     config: {
       basePrompt: 'a {VARYASYON}', ciktiKlasoru: '/tmp', chromeProfil: '/tmp',
       modelAdi: '', satirArasiBekleme: [0, 0], uretimZamanAsimiSn: 1,
-      tekrarDenemeSayisi: 1, rateLimitVarsayilanBeklemeDk: 1,
+      tekrarDenemeSayisi: 1, rateLimitVarsayilanBeklemeDk: 1, esZamanliSekme: 1,
     },
     satirlar: [{ metin: 'a', dosyaAdi: 'a' }],
-    tarayici: {
-      baslat: async () => {}, yenidenBaslat: async () => {}, yeniSohbetAc: async () => {},
+    sekmeler: [{
+      yeniSohbetAc: async () => {},
       oturumAcikMi: async () => true, aktifModelAdi: async () => '',
       gorselUret: () => new Promise(() => {}), // asılı kalır
-      sonGorseliKaydet: async () => {}, kapat: async () => {},
-    },
+      sonGorseliKaydet: async () => {},
+    }],
+    tarayiciYenidenBaslat: async () => {},
     logger: { bilgi: () => {}, uyari: () => {}, hata: () => {} } as never,
     tamamlandiMi: () => false,
     basarisizKaydet: () => {},

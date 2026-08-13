@@ -71,7 +71,7 @@ describe('projeDogrula', () => {
     );
     expect(p.ayarlar).toEqual({ ...VARSAYILAN_AYARLAR, modelAdi: 'y' });
     expect(Object.keys(p.ayarlar).sort()).toEqual([
-      'modelAdi', 'rateLimitVarsayilanBeklemeDk', 'satirArasiBekleme',
+      'esZamanliSekme', 'modelAdi', 'rateLimitVarsayilanBeklemeDk', 'satirArasiBekleme',
       'tekrarDenemeSayisi', 'uretimZamanAsimiSn',
     ]);
   });
@@ -283,3 +283,31 @@ describe('ProjelerDepo — göç', () => {
     hataSpy.mockRestore();
   });
 });
+
+describe('esZamanliSekme ayarı', () => {
+  const temel = { id: 'p1', ad: 'Proje' };
+
+  it('alan yoksa 1 döner (eski proje dosyaları için göç yolu)', () => {
+    const proje = projeDogrula({ ...temel, ayarlar: {} }, ciktiKoku);
+    expect(proje.ayarlar.esZamanliSekme).toBe(1);
+  });
+
+  it('geçerli değeri korur', () => {
+    const proje = projeDogrula({ ...temel, ayarlar: { esZamanliSekme: 3 } }, ciktiKoku);
+    expect(proje.ayarlar.esZamanliSekme).toBe(3);
+  });
+
+  it('aralık dışını ve tam sayı olmayanı reddeder', () => {
+    for (const gecersiz of [0, 5, 2.5, -1, '3']) {
+      expect(() =>
+        projeDogrula({ ...temel, ayarlar: { esZamanliSekme: gecersiz } }, ciktiKoku),
+      ).toThrow('esZamanliSekme 1 ile 4 arasında tam sayı olmalı');
+    }
+  });
+
+  it("projedenConfig alanı Config'e taşır", () => {
+    const proje = projeDogrula({ ...temel, ayarlar: { esZamanliSekme: 2 } }, ciktiKoku);
+    expect(projedenConfig(proje, '/tmp/profil').esZamanliSekme).toBe(2);
+  });
+});
+

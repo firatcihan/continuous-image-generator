@@ -62,6 +62,8 @@ export async function isDurumunuTazele() {
         ozet: bilgi.ozet,
         sira: bilgi.sira,
         toplam: bilgi.toplam,
+        biten: bilgi.biten,
+        ucusta: bilgi.ucusta,
       },
     });
   } catch (hata) {
@@ -100,9 +102,17 @@ export function ilerlemeyiCiz() {
   if (buProjeninIsi) {
     const sayac = document.createElement('p');
     sayac.className = 'soluk';
+    // `sira` değil `biten`: paralelde üç işçi 5, 6, 7'deyken "sira" tanımsızdır.
     sayac.textContent =
-      `${is.sira}/${is.toplam} · ✓ ${is.ozet.basarili} · atlanan ${is.ozet.atlanan} · ✗ ${is.ozet.basarisiz}`;
+      `${is.biten}/${is.toplam} · ✓ ${is.ozet.basarili} · atlanan ${is.ozet.atlanan} · ✗ ${is.ozet.basarisiz}`;
     kap.append(sayac);
+
+    if (is.ucusta.length > 0) {
+      const ucusta = document.createElement('p');
+      ucusta.className = 'soluk';
+      ucusta.textContent = `Üretiliyor: ${is.ucusta.join(' · ')}`;
+      kap.append(ucusta);
+    }
 
     if (durdurmaBekliyor) {
       const bekleme = document.createElement('p');
@@ -164,7 +174,7 @@ function seridiCiz() {
 
   const metin = document.createElement('span');
   metin.textContent =
-    `▶ ${ozet ? ozet.ad : durum.is.projeId} — ${durum.is.sira}/${durum.is.toplam}`;
+    `▶ ${ozet ? ozet.ad : durum.is.projeId} — ${durum.is.biten}/${durum.is.toplam}`;
   serit.append(metin);
 
   // Kullanıcı başka projeye gezmişken şerit kaybolmaz; tek iş kısıtının

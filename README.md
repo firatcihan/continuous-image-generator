@@ -43,7 +43,8 @@ Arayüzde:
 2. **`2 · Başlat`** — seçili proje işlenmeye başlar: yeni sohbet → prompt →
    görseli bekle → indir → sıradaki satır.
 
-Aynı anda tek iş çalışır. Program sizden bir şey beklediğinde (oturum düştü,
+Aynı anda tek **iş** çalışır (bir işin içinde birden fazla sekme olabilir —
+bkz. "Paralel üretim"). Program sizden bir şey beklediğinde (oturum düştü,
 yanlış model) sağ kolonda kart çıkar; sorunu tarayıcıda giderip **Giriş
 yaptım, devam et**'e basın.
 
@@ -76,6 +77,7 @@ Bir projeyi açtığınızda:
 | `Üretim zaman aşımı` | Bir görselin üretimi için azami bekleme (saniye). |
 | `Tekrar deneme sayısı` | Zaman aşımı/tarayıcı hatasında satır başına deneme sayısı. |
 | `Limit varsayılan bekleme` | Limit mesajında süre yazmıyorsa beklenecek dakika. |
+| `Eş zamanlı sekme` | Aynı anda kaç sekmede üretim yapılacağı (1-4). `1` sırayla üretir. Ayrıntı: aşağıdaki "Paralel üretim". |
 
 Değişiklikler otomatik kaydedilir (yazmayı bıraktıktan ~0,8 sn sonra); başlık
 yanındaki gösterge "Kaydedildi"/"Geçersiz — kaydedilmedi" der. Ayrı bir Kaydet
@@ -126,6 +128,33 @@ Görsel silme kasıtlı olarak dar kapsamlıdır:
 
 Çalışan bir proje silinemez — önce durdurun.
 
+## Paralel üretim
+
+Varsayılan olarak satırlar tek sekmede sırayla üretilir. **Eş zamanlı sekme**
+ayarını 2-4 yaparsanız aynı Chromium penceresinde o kadar sekme açılır ve
+satırlar aralarında paylaştırılır. Bir görsel ~60 saniye sürdüğü için 3 sekme
+200 satırlık bir koşuyu ~3,5 saatten ~1,2 saate indirebilir.
+
+"Edebilir", çünkü kazanç darboğaza bağlı:
+
+- Darboğaz **üretim gecikmesi** ise kazanç N katına yakındır.
+- Darboğaz **ChatGPT'nin görsel kotası** ise kazanç yoktur: kota hesap
+  başınadır, N sekme onu N kat hızlı tüketip beklemeye geçer.
+
+Hangisi olduğunu ancak deneyerek görürsünüz. Bu yüzden varsayılan `1`: önce
+2'de deneyin, `calisma.log`'da limit uyarısı çıkmıyorsa 3'e çıkın.
+
+Rate limit geldiğinde **bütün sekmeler** durur: limiti ilk gören sekme bekler,
+diğerleri elindeki görseli bitirip yeni satır çekmeyi keser. Aynı şekilde
+oturum düşerse tek bir "Giriş yaptım, devam et" kartı çıkar ve onayınız tüm
+sekmeleri birden serbest bırakır; tarayıcı çökerse bir kez yeniden başlatılır.
+
+Sekmeler kademeli açılır (her sekme bir öncekinden "satır arası bekleme" kadar
+sonra başlar); N prompt aynı anda gitmez.
+
+Sağ kolonda sayaç `biten/toplam` gösterir ve altında o an üretimde olan
+satırlar listelenir.
+
 ## Devam (Resume)
 
 Bir satır, çıktı PNG'si diskte varsa "bitti" sayılır. İşi ne zaman
@@ -159,6 +188,9 @@ Tüm DOM seçicileri tek dosyada: `src/seciciler.ts`. Tarayıcıda sağ tık →
 **Limit/red mesajları yakalanmıyor:** Kalıplar `src/rateLimit.ts`
 (`LIMIT_KALIPLARI`) ve `src/tarayici.ts` (`RED_KALIPLARI`) içinde; yeni mesaj
 biçimini regex olarak ekleyin.
+
+**Paralelde limit sürekli geliyor:** Eş zamanlı sekmeyi düşürün. `1` sıralı
+davranışa döner ve her zaman güvenli seçenektir.
 
 **Arayüz 401 diyor:** Adresteki `?t=…` düşmüş olabilir (yer imine
 kaydettiyseniz token eskimiştir). Terminaldeki güncel adresi kullanın.

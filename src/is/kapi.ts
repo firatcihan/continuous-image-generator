@@ -23,3 +23,16 @@ export class Kapi {
     return new Promise((coz) => this.bekleyenler.push(coz));
   }
 }
+
+/**
+ * Worker'ın döngü başında geçtiği koordinasyon kapıları.
+ *
+ * Üçü de "ilk gören yapar, diğerleri bekler" ilkesinin kapı yarısıdır: bir işçi
+ * sorunu ele alırken diğerleri UÇUŞTAKİ işini bitirir ama YENİ satır çekemez.
+ * Diğer yarı `TekYurutuc` (bkz. src/is/tekYurutuc.ts).
+ */
+export interface IsKapilari {
+  limit: Kapi;
+  kullanici: Kapi;
+  yenidenBaslatma: Kapi;
+}

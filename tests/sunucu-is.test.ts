@@ -54,6 +54,12 @@ describe('GET /api/is', () => {
     expect(y.statusCode).toBe(200);
     expect(y.json().durum).toBe('bosta');
   });
+
+  it('biten ve ucusta alanlarını döner', async () => {
+    const y = await uygulama.inject({ method: 'GET', url: '/api/is', headers: yetkili() });
+    expect(y.json().biten).toBe(0);
+    expect(y.json().ucusta).toEqual([]);
+  });
 });
 
 describe('POST /api/is/baslat', () => {

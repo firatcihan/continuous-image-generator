@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IsYoneticisi } from '../src/is/isYoneticisi.js';
 import type { IsDurumu, IsOlayi } from '../src/is/olaylar.js';
-import type { Config, GorselSonucu, Satir, UretimTarayicisi } from '../src/tipler.js';
+import type { Config, GorselSonucu, Satir, UretimSekmesi } from '../src/tipler.js';
 
 const CONFIG: Config = {
   basePrompt: 'Bir kedi, {VARYASYON}',
@@ -12,6 +12,7 @@ const CONFIG: Config = {
   uretimZamanAsimiSn: 1,
   tekrarDenemeSayisi: 3,
   rateLimitVarsayilanBeklemeDk: 15,
+  esZamanliSekme: 1,
 };
 
 const SATIRLAR: Satir[] = [
@@ -19,17 +20,14 @@ const SATIRLAR: Satir[] = [
   { metin: 'plajda', dosyaAdi: 'kedi_plaj' },
 ];
 
-function sahteTarayici(sonuclar: GorselSonucu[] = []): UretimTarayicisi {
+function sahteSekme(sonuclar: GorselSonucu[] = []): UretimSekmesi {
   const kuyruk = [...sonuclar];
   return {
-    baslat: async () => {},
-    yenidenBaslat: async () => {},
     yeniSohbetAc: async () => {},
     oturumAcikMi: async () => true,
     aktifModelAdi: async () => 'GPT-5',
     gorselUret: async () => kuyruk.shift() ?? { tip: 'gorsel' },
     sonGorseliKaydet: async () => {},
-    kapat: async () => {},
   };
 }
 
@@ -38,7 +36,8 @@ function ayarlar(ek: Partial<Parameters<IsYoneticisi['baslat']>[0]> = {}) {
     projeId: 'proje-1',
     config: CONFIG,
     satirlar: SATIRLAR,
-    tarayici: sahteTarayici(),
+    sekmeler: [sahteSekme()],
+    tarayiciYenidenBaslat: async () => {},
     logger: { bilgi: vi.fn(), uyari: vi.fn(), hata: vi.fn() } as never,
     tamamlandiMi: () => false,
     basarisizKaydet: () => {},
@@ -120,7 +119,7 @@ describe('IsYoneticisi', () => {
     await y.baslat(
       ayarlar({
         satirlar: [SATIRLAR[0]],
-        tarayici: sahteTarayici([{ tip: 'rateLimit', mesaj: 'Try again in 2 minutes.' }, { tip: 'gorsel' }]),
+        sekmeler: [sahteSekme([{ tip: 'rateLimit', mesaj: 'Try again in 2 minutes.' }, { tip: 'gorsel' }])],
         uyuMotoru: async (_ms, secenekler) => {
           secenekler.tik?.(120_000);
         },
@@ -132,8 +131,8 @@ describe('IsYoneticisi', () => {
 
   it('oturum düşünce kullaniciBekliyor durumunda kalır, kullaniciHazir ile sürer', async () => {
     let oturumAcik = false;
-    const tarayici = sahteTarayici();
-    tarayici.oturumAcikMi = async () => oturumAcik;
+    const sekme = sahteSekme();
+    sekme.oturumAcikMi = async () => oturumAcik;
 
     const y = new IsYoneticisi();
     const olaylar: IsOlayi[] = [];
@@ -145,7 +144,7 @@ describe('IsYoneticisi', () => {
       }
     });
 
-    await y.baslat(ayarlar({ satirlar: [SATIRLAR[0]], tarayici }));
+    await y.baslat(ayarlar({ satirlar: [SATIRLAR[0]], sekmeler: [sekme] }));
 
     expect(olaylar.some((o) => o.tip === 'kullaniciGerekli')).toBe(true);
     expect(y.bilgi().durum).toBe('bitti');
@@ -163,17 +162,22 @@ describe('IsYoneticisi', () => {
     await Promise.resolve();
     await expect(y.baslat(ayarlar())).rejects.toThrow('zaten çalışıyor');
 
-    cozucu?.();
+    // uyuMotoru'nun GERÇEKTEN çağrıldığını bekle. Belirli sayıda microtask'a
+    // güvenmek kırılgandı: worker'ın uykuya ulaşmadan önce geçtiği `await`
+    // sayısı değişince cozucu atanmamış oluyor ve iş sonsuza kadar asılıyordu.
+    while (cozucu === undefined) await new Promise((coz) => setTimeout(coz, 0));
+
+    cozucu();
     y.durdur();
     await calisma;
   });
 
   it('beklenmeyen hatada hata durumuna geçer ve hata olayı yayınlar', async () => {
-    const tarayici = sahteTarayici();
-    tarayici.yeniSohbetAc = async () => {
+    const sekme = sahteSekme();
+    sekme.yeniSohbetAc = async () => {
       throw new Error('çöktü');
     };
-    tarayici.yenidenBaslat = async () => {
+    const tarayiciYenidenBaslat = async () => {
       throw new Error('yeniden başlatılamadı');
     };
 
@@ -181,7 +185,9 @@ describe('IsYoneticisi', () => {
     const olaylar: IsOlayi[] = [];
     y.dinle((o) => olaylar.push(o));
 
-    await expect(y.baslat(ayarlar({ tarayici }))).rejects.toThrow();
+    await expect(
+      y.baslat(ayarlar({ sekmeler: [sekme], tarayiciYenidenBaslat })),
+    ).rejects.toThrow();
     expect(y.bilgi().durum).toBe('hata');
     expect(olaylar.some((o) => o.tip === 'hata')).toBe(true);
   });
@@ -205,7 +211,7 @@ describe('IsYoneticisi', () => {
     await y.baslat(
       ayarlar({
         satirlar: [SATIRLAR[0]],
-        tarayici: sahteTarayici([{ tip: 'rateLimit', mesaj: 'Try again in 2 minutes.' }]),
+        sekmeler: [sahteSekme([{ tip: 'rateLimit', mesaj: 'Try again in 2 minutes.' }])],
         uyuMotoru: async (_ms, secenekler) => {
           // sadece rate-limit uykusunda (tik tanımlı) durdur çağrısı gelir
           if (secenekler.tik) y.durdur();
@@ -217,8 +223,8 @@ describe('IsYoneticisi', () => {
   });
 
   it('durdur sonrası gecikmiş kullaniciHazir çağrısı durumu sahte calisiyor yapmaz', async () => {
-    const tarayici = sahteTarayici();
-    tarayici.oturumAcikMi = async () => false;
+    const sekme = sahteSekme();
+    sekme.oturumAcikMi = async () => false;
 
     const y = new IsYoneticisi();
     const durumlar: IsDurumu[] = [];
@@ -234,7 +240,7 @@ describe('IsYoneticisi', () => {
       }
     });
 
-    await y.baslat(ayarlar({ satirlar: [SATIRLAR[0]], tarayici }));
+    await y.baslat(ayarlar({ satirlar: [SATIRLAR[0]], sekmeler: [sekme] }));
 
     expect(durumlar).toEqual(['calisiyor', 'kullaniciBekliyor', 'durduruldu']);
   });
@@ -242,8 +248,8 @@ describe('IsYoneticisi', () => {
   it(
     'kullaniciGerekli olayına senkron durdur() yanıtı kilitlenmeye yol açmaz (BULGU 1)',
     async () => {
-      const tarayici = sahteTarayici();
-      tarayici.oturumAcikMi = async () => false;
+      const sekme = sahteSekme();
+      sekme.oturumAcikMi = async () => false;
 
       const y = new IsYoneticisi();
       const durumlar: IsDurumu[] = [];
@@ -258,7 +264,7 @@ describe('IsYoneticisi', () => {
       });
 
       await expect(
-        y.baslat(ayarlar({ satirlar: [SATIRLAR[0]], tarayici })),
+        y.baslat(ayarlar({ satirlar: [SATIRLAR[0]], sekmeler: [sekme] })),
       ).resolves.toBeDefined();
 
       expect(durumlar).toContain('kullaniciBekliyor');
@@ -303,10 +309,10 @@ describe('IsYoneticisi', () => {
       await y.baslat(
         ayarlar({
           satirlar: [SATIRLAR[0]],
-          tarayici: sahteTarayici([
+          sekmeler: [sahteSekme([
             { tip: 'rateLimit', mesaj: 'Try again in 2 minutes.' },
             { tip: 'gorsel' },
-          ]),
+          ])],
           uyuMotoru: async (_ms, secenekler) => {
             if (secenekler.tik && !duraklatildi) {
               duraklatildi = true;
@@ -335,5 +341,146 @@ describe('IsYoneticisi', () => {
     const bilgi = y.bilgi();
     expect(bilgi.sira).toBe(SATIRLAR.length);
     expect(bilgi.toplam).toBe(SATIRLAR.length);
+  });
+
+  it('bilgi() biten sayısını ve uçuştaki dosyaları taşır', async () => {
+    const y = new IsYoneticisi();
+    const ucustaGoruntuler: string[][] = [];
+    y.dinle((olay) => {
+      if (olay.tip === 'satirBasladi') ucustaGoruntuler.push(y.bilgi().ucusta);
+    });
+
+    await y.baslat(ayarlar({ satirlar: [SATIRLAR[0], SATIRLAR[1]] }));
+
+    // Satır başlarken o dosya uçuşta görünmeli
+    expect(ucustaGoruntuler[0]).toContain(SATIRLAR[0].dosyaAdi);
+    // İş bitince uçuş listesi boşalmalı
+    expect(y.bilgi().ucusta).toEqual([]);
+    expect(y.bilgi().biten).toBe(2);
+  });
+
+  it('satirBitti olayı dosyaAdi ve güncel özeti taşır', async () => {
+    const y = new IsYoneticisi();
+    const bitenler: Array<{ dosyaAdi: string; basarili: number }> = [];
+    y.dinle((olay) => {
+      if (olay.tip === 'satirBitti') {
+        bitenler.push({ dosyaAdi: olay.dosyaAdi, basarili: olay.ozet.basarili });
+      }
+    });
+
+    await y.baslat(ayarlar({ satirlar: [SATIRLAR[0]] }));
+
+    expect(bitenler).toEqual([{ dosyaAdi: SATIRLAR[0].dosyaAdi, basarili: 1 }]);
+  });
+});
+
+describe('paralel koordinasyon', () => {
+  it('iki sekme aynı anda rate limit görürse yalnızca bir uyku yapılır', async () => {
+    const uykular: number[] = [];
+    const y = new IsYoneticisi();
+    const limit = { tip: 'rateLimit', mesaj: 'Try again in 2 minutes.' } as const;
+
+    // Uyku, İKİ sekme de limiti döndürene kadar tutulur. Aksi halde ilk sekmenin
+    // uykusu ikinci sekme daha limiti görmeden biter; tespitler çakışmaz ve iki
+    // ayrı uyku ÇIKMASI doğru davranış olurdu — test hiçbir şey kanıtlamazdı.
+    let limitDonduren = 0;
+    let ikisiDeGordu!: () => void;
+    const cakisma = new Promise<void>((coz) => (ikisiDeGordu = coz));
+
+    const limitliSekme = (): UretimSekmesi => {
+      const s = sahteSekme();
+      let ilk = true;
+      s.gorselUret = async () => {
+        if (!ilk) return { tip: 'gorsel' };
+        ilk = false;
+        limitDonduren++;
+        // Makrotask: ikinci sekme uyku sarmalayıcısına GİRDİKTEN sonra serbest bırak
+        if (limitDonduren === 2) setTimeout(ikisiDeGordu, 0);
+        return limit;
+      };
+      return s;
+    };
+
+    await y.baslat(
+      ayarlar({
+        satirlar: [SATIRLAR[0], SATIRLAR[1]],
+        sekmeler: [limitliSekme(), limitliSekme()],
+        uyuMotoru: async (ms, secenekler) => {
+          if (!secenekler.tik) return; // baslangic / satirArasi uykuları anında geçer
+          uykular.push(ms);
+          await cakisma;
+        },
+      }),
+    );
+
+    // İki sekme de limit gördü ama TekYurutuc tek uykuya bağladı
+    expect(uykular.filter((ms) => ms === 2 * 60_000)).toHaveLength(1);
+  });
+
+  it('iki sekme aynı anda oturum kapalı görürse tek kullaniciGerekli olayı çıkar', async () => {
+    const y = new IsYoneticisi();
+    // Bayrak SEKME BAŞINA: paylaşılan tek bayrakta ikinci sekme oturumu zaten
+    // açık görür ve testi vakumlaştırırdı — koruma olmasa bile tek olay çıkardı.
+    const sekme = () => {
+      const s = sahteSekme();
+      let ilk = true;
+      s.oturumAcikMi = async () => {
+        if (!ilk) return true;
+        ilk = false;
+        return false;
+      };
+      return s;
+    };
+
+    const olaylar: string[] = [];
+    y.dinle((olay) => {
+      olaylar.push(olay.tip);
+      if (olay.tip === 'kullaniciGerekli') setTimeout(() => y.kullaniciHazir(), 0);
+    });
+
+    await y.baslat(
+      ayarlar({ satirlar: [SATIRLAR[0], SATIRLAR[1]], sekmeler: [sekme(), sekme()] }),
+    );
+
+    expect(olaylar.filter((t) => t === 'kullaniciGerekli')).toHaveLength(1);
+  });
+
+  it('iki sekme aynı anda çökerse tarayıcı bir kez yeniden başlatılır', async () => {
+    const y = new IsYoneticisi();
+    let yenidenBaslatSayisi = 0;
+
+    // Yeniden başlatma, İKİ sekme de çökene kadar tutulur — aksi halde ilki
+    // biter, ikinci çökme ayrı bir zamana düşer ve iki başlatma ÇIKMASI doğru
+    // davranış olurdu.
+    let cokenSayisi = 0;
+    let ikisiDeCoktu!: () => void;
+    const cakisma = new Promise<void>((coz) => (ikisiDeCoktu = coz));
+
+    const sekmeler = [0, 1].map(() => {
+      const s = sahteSekme();
+      let ilkCagri = true;
+      s.yeniSohbetAc = async () => {
+        if (!ilkCagri) return;
+        ilkCagri = false;
+        cokenSayisi++;
+        // Makrotask: ikinci işçi sarmalayıcıya GİRDİKTEN sonra serbest bırak
+        if (cokenSayisi === 2) setTimeout(ikisiDeCoktu, 0);
+        throw new Error('tarayıcı çöktü');
+      };
+      return s;
+    });
+
+    await y.baslat(
+      ayarlar({
+        satirlar: [SATIRLAR[0], SATIRLAR[1]],
+        sekmeler,
+        tarayiciYenidenBaslat: async () => {
+          yenidenBaslatSayisi++;
+          await cakisma;
+        },
+      }),
+    );
+
+    expect(yenidenBaslatSayisi).toBe(1);
   });
 });
