@@ -1,230 +1,232 @@
-import { rastgeleSureMs } from './bekleme.js';
-import { ciktiYolu } from './durum.js';
-import type { IsKapilari, Kapi } from './is/kapi.js';
+import { randomDurationMs } from './wait.js';
+import { outputPath } from './status.js';
+import type { JobGates, Gate } from './job/gate.js';
 import type { Logger } from './logger.js';
-import { promptOlustur } from './prompt.js';
-import { rateLimitAlgila } from './rateLimit.js';
-import type { Config, IslemOzeti, Satir, UretimSekmesi } from './tipler.js';
+import { buildPrompt } from './prompt.js';
+import { detectRateLimit } from './rateLimit.js';
+import type { Config, RunSummary, Row, GenerationTab } from './types.js';
 
-export type UykuSebebi = 'satirArasi' | 'rateLimit' | 'geciciHata' | 'baslangic';
+export type SleepReason = 'betweenRows' | 'rateLimit' | 'transientError' | 'startup';
 
 /**
- * ChatGPT geçici hata verdiğinde tekrar denemeden önceki bekleme.
- * Kısa tutuluyor: rate limit değil, sunucu tarafı anlık aksaklık.
+ * Wait before retrying when ChatGPT returns a transient error.
+ * Kept short: this is not a rate limit, it is a momentary server-side hiccup.
  */
-const GECICI_HATA_BEKLEME_MS = 10_000;
+const TRANSIENT_ERROR_WAIT_MS = 10_000;
 
-export interface IsKontrolu {
+export interface JobControl {
   signal: AbortSignal;
-  kapi: Kapi;
+  gate: Gate;
 }
 
-export interface WorkerBagimliliklari {
+export interface WorkerDeps {
   config: Config;
-  sekmeler: UretimSekmesi[];
-  tarayiciYenidenBaslat: () => Promise<void>;
+  tabs: GenerationTab[];
+  restartBrowser: () => Promise<void>;
   logger: Logger;
-  kontrol: IsKontrolu;
-  kapilar: IsKapilari;
-  uyu: (ms: number, sebep: UykuSebebi) => Promise<void>;
-  tamamlandiMi: (dosyaAdi: string) => boolean;
-  basarisizKaydet: (satir: Satir, sebep: string) => void;
-  kullanicidanDevamBekle: (mesaj: string) => Promise<void>;
-  satirBasladi: (sira: number, toplam: number, satir: Satir) => void;
-  satirBitti: (sira: number, sonuc: 'basarili' | 'atlandi' | 'basarisiz', sebep?: string) => void;
+  control: JobControl;
+  gates: JobGates;
+  sleep: (ms: number, reason: SleepReason) => Promise<void>;
+  isCompleted: (fileName: string) => boolean;
+  recordFailure: (row: Row, reason: string) => void;
+  waitForUser: (message: string) => Promise<void>;
+  onRowStarted: (row: number, total: number, record: Row) => void;
+  onRowFinished: (row: number, result: 'succeeded' | 'skipped' | 'failed', reason?: string) => void;
 }
 
-export async function tumSatirlariIsle(b: WorkerBagimliliklari, satirlar: Satir[]): Promise<IslemOzeti> {
-  const ozet: IslemOzeti = { basarili: 0, atlanan: 0, basarisiz: 0 };
-  let imlec = 0;
+export async function processAllRows(d: WorkerDeps, rows: Row[]): Promise<RunSummary> {
+  const summary: RunSummary = { succeeded: 0, skipped: 0, failed: 0 };
+  let cursor = 0;
 
-  // Okuma ile artırma arasında `await` YOK — Node tek iş parçacıklı olduğu için
-  // bu atomiktir; iki işçi asla aynı satırı çekemez.
-  const siradaki = (): { sira: number; satir: Satir } | null =>
-    imlec < satirlar.length ? { sira: ++imlec, satir: satirlar[imlec - 1] } : null;
+  // NO `await` between reading and incrementing — Node is single-threaded so
+  // this is atomic; two workers can never pull the same row.
+  const next = (): { row: number; record: Row } | null =>
+    cursor < rows.length ? { row: ++cursor, record: rows[cursor - 1] } : null;
 
   await Promise.all(
-    b.sekmeler.map((sekme, sira) => birIsciCalistir(b, sekme, sira, siradaki, ozet, satirlar.length)),
+    d.tabs.map((tab, index) => runWorker(d, tab, index, next, summary, rows.length)),
   );
 
-  return ozet;
+  return summary;
 }
 
-/** Duraklatma + üç koordinasyon kapısı. Hepsi tek yerde geçilir. */
-async function kapilariGec(b: WorkerBagimliliklari): Promise<void> {
-  await b.kontrol.kapi.gec();
-  await b.kapilar.limit.gec();
-  await b.kapilar.kullanici.gec();
-  await b.kapilar.yenidenBaslatma.gec();
+/** Pause plus the three coordination gates. All passed in one place. */
+async function passGates(d: WorkerDeps): Promise<void> {
+  await d.control.gate.pass();
+  await d.gates.limit.pass();
+  await d.gates.user.pass();
+  await d.gates.restart.pass();
 }
 
 /**
- * Tek bir sekmede kuyruk boşalana kadar satır işler.
+ * Processes rows on a single tab until the queue drains.
  *
- * `isciSirasi` yalnızca kademeli başlangıç için: N prompt aynı milisaniyede
- * uçarsa hem otomasyon imzası büyür hem de hesap zaten limitliyse N işçi
- * limiti aynı anda keşfedip N deneme hakkını birden yakar.
+ * `workerIndex` exists only for the staggered start: if N prompts fly in the
+ * same millisecond the automation footprint grows, and if the account is
+ * already limited, N workers discover the limit simultaneously and burn N
+ * retry attempts at once.
  */
-async function birIsciCalistir(
-  b: WorkerBagimliliklari,
-  sekme: UretimSekmesi,
-  isciSirasi: number,
-  siradaki: () => { sira: number; satir: Satir } | null,
-  ozet: IslemOzeti,
-  toplam: number,
+async function runWorker(
+  d: WorkerDeps,
+  tab: GenerationTab,
+  workerIndex: number,
+  next: () => { row: number; record: Row } | null,
+  summary: RunSummary,
+  total: number,
 ): Promise<void> {
-  if (isciSirasi > 0) {
-    await b.uyu(isciSirasi * rastgeleSureMs(b.config.satirArasiBekleme), 'baslangic');
+  if (workerIndex > 0) {
+    await d.sleep(workerIndex * randomDurationMs(d.config.satirArasiBekleme), 'startup');
   }
 
   for (;;) {
-    if (b.kontrol.signal.aborted) return;
-    await kapilariGec(b);
-    if (b.kontrol.signal.aborted) return;
+    if (d.control.signal.aborted) return;
+    await passGates(d);
+    if (d.control.signal.aborted) return;
 
-    const is = siradaki();
-    if (is === null) return; // kuyruk boşaldı, işçi kendini çeker
+    const job = next();
+    if (job === null) return; // queue drained, the worker retires
 
-    const { sira, satir } = is;
+    const { row, record } = job;
 
-    if (b.tamamlandiMi(satir.dosyaAdi)) {
-      b.logger.bilgi(`[${sira}/${toplam}] atlandı (zaten var): ${satir.dosyaAdi}.png`);
-      ozet.atlanan++;
-      b.satirBitti(sira, 'atlandi');
+    if (d.isCompleted(record.dosyaAdi)) {
+      d.logger.info(`[${row}/${total}] atlandı (zaten var): ${record.dosyaAdi}.png`);
+      summary.skipped++;
+      d.onRowFinished(row, 'skipped');
       continue;
     }
 
-    b.logger.bilgi(`[${sira}/${toplam}] işleniyor: ${satir.dosyaAdi}`);
-    b.satirBasladi(sira, toplam, satir);
+    d.logger.info(`[${row}/${total}] işleniyor: ${record.dosyaAdi}`);
+    d.onRowStarted(row, total, record);
 
-    const sonuc = await satiriIsle(b, sekme, satir);
-    if (sonuc.basarili) {
-      ozet.basarili++;
-      b.satirBitti(sira, 'basarili');
+    const result = await processRow(d, tab, record);
+    if (result.ok) {
+      summary.succeeded++;
+      d.onRowFinished(row, 'succeeded');
     } else {
-      ozet.basarisiz++;
-      b.satirBitti(sira, 'basarisiz', sonuc.sebep);
+      summary.failed++;
+      d.onRowFinished(row, 'failed', result.reason);
     }
 
-    await b.uyu(rastgeleSureMs(b.config.satirArasiBekleme), 'satirArasi');
+    await d.sleep(randomDurationMs(d.config.satirArasiBekleme), 'betweenRows');
   }
 }
 
-interface SatirSonucu {
-  basarili: boolean;
-  sebep?: string;
+interface RowResult {
+  ok: boolean;
+  reason?: string;
 }
 
-async function satiriIsle(
-  b: WorkerBagimliliklari,
-  sekme: UretimSekmesi,
-  satir: Satir,
-): Promise<SatirSonucu> {
-  const prompt = promptOlustur(b.config.basePrompt, satir.metin);
-  let deneme = 0;
-  /** Başkasının yeniden başlatması yüzünden kaç kez beklendi — livelock freni. */
-  let yenidenBaslatmaBeklemesi = 0;
+async function processRow(
+  d: WorkerDeps,
+  tab: GenerationTab,
+  record: Row,
+): Promise<RowResult> {
+  const prompt = buildPrompt(d.config.basePrompt, record.metin);
+  let attempt = 0;
+  /** How many times we waited on someone else's restart — livelock brake. */
+  let restartWaits = 0;
 
-  let sonSebep = 'bilinmiyor';
+  let lastReason = 'bilinmiyor';
 
-  while (deneme < b.config.tekrarDenemeSayisi) {
-    if (b.kontrol.signal.aborted) return { basarili: false, sebep: 'durduruldu' };
-    await b.kontrol.kapi.gec();
-    if (b.kontrol.signal.aborted) return { basarili: false, sebep: 'durduruldu' };
+  while (attempt < d.config.tekrarDenemeSayisi) {
+    if (d.control.signal.aborted) return { ok: false, reason: 'durduruldu' };
+    await d.control.gate.pass();
+    if (d.control.signal.aborted) return { ok: false, reason: 'durduruldu' };
 
     try {
-      await sekme.yeniSohbetAc();
+      await tab.openNewChat();
 
-      if (!(await sekme.oturumAcikMi())) {
-        b.logger.uyari('oturum kapalı görünüyor; kullanıcı girişi bekleniyor');
-        await b.kullanicidanDevamBekle(
+      if (!(await tab.isLoggedIn())) {
+        d.logger.warn('oturum kapalı görünüyor; kullanıcı girişi bekleniyor');
+        await d.waitForUser(
           'ChatGPT oturumu kapalı. Açılan tarayıcıda elle giriş yapın, sonra Devam edin.',
         );
-        continue; // deneme hakkı yakılmaz
+        continue; // no retry attempt burned
       }
 
-      if (b.config.modelAdi !== '') {
-        const aktifModel = await sekme.aktifModelAdi();
-        if (!aktifModel.toLowerCase().includes(b.config.modelAdi.toLowerCase())) {
-          b.logger.uyari(`beklenen model "${b.config.modelAdi}", aktif model "${aktifModel}"`);
-          await b.kullanicidanDevamBekle(
-            `Yanlış model seçili (aktif: "${aktifModel}", beklenen: "${b.config.modelAdi}"). ` +
+      if (d.config.modelAdi !== '') {
+        const activeModel = await tab.activeModelName();
+        if (!activeModel.toLowerCase().includes(d.config.modelAdi.toLowerCase())) {
+          d.logger.warn(`beklenen model "${d.config.modelAdi}", aktif model "${activeModel}"`);
+          await d.waitForUser(
+            `Yanlış model seçili (aktif: "${activeModel}", beklenen: "${d.config.modelAdi}"). ` +
               'Tarayıcıdan doğru modeli seçin, sonra Devam edin.',
           );
-          continue; // deneme hakkı yakılmaz
+          continue; // no retry attempt burned
         }
       }
 
-      const sonuc = await sekme.gorselUret(prompt, b.config.uretimZamanAsimiSn);
+      const result = await tab.generateImage(prompt, d.config.uretimZamanAsimiSn);
 
-      switch (sonuc.tip) {
-        case 'gorsel': {
-          await sekme.sonGorseliKaydet(ciktiYolu(b.config.ciktiKlasoru, satir.dosyaAdi));
-          b.logger.bilgi(`kaydedildi: ${satir.dosyaAdi}.png`);
-          return { basarili: true };
+      switch (result.type) {
+        case 'image': {
+          await tab.saveLastImage(outputPath(d.config.ciktiKlasoru, record.dosyaAdi));
+          d.logger.info(`kaydedildi: ${record.dosyaAdi}.png`);
+          return { ok: true };
         }
         case 'rateLimit': {
-          const dk = rateLimitAlgila(sonuc.mesaj).beklemeDk ?? b.config.rateLimitVarsayilanBeklemeDk;
-          b.logger.uyari(`rate limit algılandı; ${dk} dk bekleniyor (satır: ${satir.dosyaAdi})`);
-          await b.uyu(dk * 60_000, 'rateLimit');
-          continue; // aynı satır, deneme hakkı yakılmaz
+          const minutes = detectRateLimit(result.message).waitMinutes ?? d.config.rateLimitVarsayilanBeklemeDk;
+          d.logger.warn(`rate limit algılandı; ${minutes} dk bekleniyor (satır: ${record.dosyaAdi})`);
+          await d.sleep(minutes * 60_000, 'rateLimit');
+          continue; // same row, no retry attempt burned
         }
-        case 'red': {
-          const sebep = `içerik reddi: ${sonuc.mesaj.slice(0, 200)}`;
-          b.logger.uyari(`${sebep} (satır: ${satir.dosyaAdi})`);
-          b.basarisizKaydet(satir, sebep);
-          return { basarili: false, sebep };
+        case 'refusal': {
+          const reason = `içerik reddi: ${result.message.slice(0, 200)}`;
+          d.logger.warn(`${reason} (satır: ${record.dosyaAdi})`);
+          d.recordFailure(record, reason);
+          return { ok: false, reason };
         }
-        case 'geciciHata': {
-          deneme++;
-          sonSebep = 'geçici hata (ChatGPT)';
-          b.logger.uyari(
-            `ChatGPT geçici hata verdi (${deneme}/${b.config.tekrarDenemeSayisi}): ${satir.dosyaAdi}` +
-              ` — ${sonuc.mesaj.slice(0, 120)}`,
+        case 'transientError': {
+          attempt++;
+          lastReason = 'geçici hata (ChatGPT)';
+          d.logger.warn(
+            `ChatGPT geçici hata verdi (${attempt}/${d.config.tekrarDenemeSayisi}): ${record.dosyaAdi}` +
+              ` — ${result.message.slice(0, 120)}`,
           );
-          if (deneme < b.config.tekrarDenemeSayisi) {
-            await b.uyu(GECICI_HATA_BEKLEME_MS, 'geciciHata');
+          if (attempt < d.config.tekrarDenemeSayisi) {
+            await d.sleep(TRANSIENT_ERROR_WAIT_MS, 'transientError');
           }
           break;
         }
-        case 'zamanAsimi': {
-          deneme++;
-          sonSebep = 'üretim zaman aşımı';
-          b.logger.uyari(`üretim zaman aşımı (${deneme}/${b.config.tekrarDenemeSayisi}): ${satir.dosyaAdi}`);
+        case 'timeout': {
+          attempt++;
+          lastReason = 'üretim zaman aşımı';
+          d.logger.warn(`üretim zaman aşımı (${attempt}/${d.config.tekrarDenemeSayisi}): ${record.dosyaAdi}`);
           break;
         }
       }
-    } catch (hata) {
-      // Hata BAŞKA bir işçinin başlattığı yeniden başlatmadan geliyorsa
-      // ("sekme N hazır değil", "Target closed") bu satırın suçu değil: context
-      // altından çekildi. Deneme hakkı yakılmaz, yeniden başlatma bitince aynı
-      // satır tazelenmiş sekmeyle denenir. Sayaç patolojik döngüye karşı fren:
-      // yeniden başlatmalar peş peşe gelirse satır sonsuza kadar dönmesin.
-      if (!b.kapilar.yenidenBaslatma.acik() && yenidenBaslatmaBeklemesi < 5) {
-        yenidenBaslatmaBeklemesi++;
-        b.logger.uyari(
-          `tarayıcı yeniden başlatılıyor (başka işçi); ${satir.dosyaAdi} bekletildi` +
+    } catch (error) {
+      // If the error comes from a restart ANOTHER worker started ("sekme N
+      // hazır değil", "Target closed") it is not this row's fault: the context
+      // was pulled out from under it. No retry attempt is burned; once the
+      // restart finishes the same row is retried on a fresh tab. The counter
+      // is a brake against a pathological loop: back-to-back restarts must not
+      // spin the row forever.
+      if (!d.gates.restart.isOpen() && restartWaits < 5) {
+        restartWaits++;
+        d.logger.warn(
+          `tarayıcı yeniden başlatılıyor (başka işçi); ${record.dosyaAdi} bekletildi` +
             ` — deneme hakkı yakılmadı`,
         );
-        // Kapı yalnızca BURADA bekleniyor, döngü başında değil: ilk denemesini
-        // henüz yapmamış işçi `birIsciCalistir` içinde zaten kapıdan geçti,
-        // onu bir kez daha bekletmek çökmeyi hiç görmemiş sekmeyi de dondururdu.
-        await b.kapilar.yenidenBaslatma.gec();
+        // The gate is awaited only HERE, not at the top of the loop: a worker
+        // that has not attempted yet already passed the gates in `runWorker`;
+        // making it wait again would also freeze a tab that never saw the crash.
+        await d.gates.restart.pass();
         continue;
       }
 
-      deneme++;
-      sonSebep = `tarayıcı hatası: ${(hata as Error).message.slice(0, 120)}`;
-      b.logger.hata(
-        `tarayıcı hatası (${deneme}/${b.config.tekrarDenemeSayisi}): ${(hata as Error).message}; yeniden başlatılıyor`,
+      attempt++;
+      lastReason = `tarayıcı hatası: ${(error as Error).message.slice(0, 120)}`;
+      d.logger.error(
+        `tarayıcı hatası (${attempt}/${d.config.tekrarDenemeSayisi}): ${(error as Error).message}; yeniden başlatılıyor`,
       );
-      await b.tarayiciYenidenBaslat();
+      await d.restartBrowser();
     }
   }
 
-  // Son başarısızlığın türünü de yaz: "tekrar deneme sayısı aşıldı" tek başına
-  // teşhis ettirmiyor — zaman aşımı mı, ChatGPT hatası mı, tarayıcı çökmesi mi?
-  const sebep = `tekrar deneme sayısı aşıldı (${b.config.tekrarDenemeSayisi}) — son sebep: ${sonSebep}`;
-  b.basarisizKaydet(satir, sebep);
-  return { basarili: false, sebep };
+  // Include the kind of the last failure: "retry count exceeded" alone does
+  // not let the user diagnose — timeout, ChatGPT error, or browser crash?
+  const reason = `tekrar deneme sayısı aşıldı (${d.config.tekrarDenemeSayisi}) — son sebep: ${lastReason}`;
+  d.recordFailure(record, reason);
+  return { ok: false, reason };
 }

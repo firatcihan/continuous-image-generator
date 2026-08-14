@@ -1,66 +1,66 @@
 import { describe, expect, it } from 'vitest';
-import { promptOlustur, YER_TUTUCU, onizlemeUret, yerTutucuVarMi } from '../src/prompt.js';
-import type { Satir } from '../src/tipler.js';
+import { buildPrompt, PLACEHOLDER, buildPreviews, hasPlaceholder } from '../src/prompt.js';
+import type { Row } from '../src/types.js';
 
-describe('promptOlustur', () => {
-  it('{VARYASYON} yer tutucusunu metinle değiştirir', () => {
-    expect(promptOlustur('Bir kedi, {VARYASYON}, detaylı', 'karda')).toBe('Bir kedi, karda, detaylı');
+describe('buildPrompt', () => {
+  it('replaces the {VARYASYON} placeholder with the text', () => {
+    expect(buildPrompt('Bir kedi, {VARYASYON}, detaylı', 'karda')).toBe('Bir kedi, karda, detaylı');
   });
 
-  it('birden çok {VARYASYON} geçtiyse hepsini değiştirir', () => {
-    expect(promptOlustur('{VARYASYON} ve {VARYASYON}', 'x')).toBe('x ve x');
+  it('replaces every occurrence when {VARYASYON} appears multiple times', () => {
+    expect(buildPrompt('{VARYASYON} ve {VARYASYON}', 'x')).toBe('x ve x');
   });
 
-  it('yer tutucu yoksa hata fırlatır', () => {
-    expect(() => promptOlustur('yer tutucu yok', 'x')).toThrow('{VARYASYON}');
+  it('throws when the placeholder is missing', () => {
+    expect(() => buildPrompt('yer tutucu yok', 'x')).toThrow('{VARYASYON}');
   });
 });
 
-const SATIRLAR: Satir[] = [
+const ROWS: Row[] = [
   { metin: 'karda', dosyaAdi: 'a' },
   { metin: 'plajda', dosyaAdi: 'b' },
   { metin: 'ormanda', dosyaAdi: 'c' },
   { metin: 'çölde', dosyaAdi: 'd' },
 ];
 
-describe('yerTutucuVarMi', () => {
-  it('yer tutucu varsa true', () => {
-    expect(yerTutucuVarMi(`Bir kedi, ${YER_TUTUCU}`)).toBe(true);
+describe('hasPlaceholder', () => {
+  it('true when the placeholder is present', () => {
+    expect(hasPlaceholder(`Bir kedi, ${PLACEHOLDER}`)).toBe(true);
   });
-  it('yer tutucu yoksa false', () => {
-    expect(yerTutucuVarMi('Bir kedi')).toBe(false);
+  it('false when the placeholder is missing', () => {
+    expect(hasPlaceholder('Bir kedi')).toBe(false);
   });
 });
 
-describe('onizlemeUret', () => {
-  it('varsayılan olarak ilk 3 satırı render eder', () => {
-    const onizleme = onizlemeUret(`Bir kedi, ${YER_TUTUCU}, detaylı`, SATIRLAR);
-    expect(onizleme).toEqual([
+describe('buildPreviews', () => {
+  it('renders the first 3 rows by default', () => {
+    const previews = buildPreviews(`Bir kedi, ${PLACEHOLDER}, detaylı`, ROWS);
+    expect(previews).toEqual([
       'Bir kedi, karda, detaylı',
       'Bir kedi, plajda, detaylı',
       'Bir kedi, ormanda, detaylı',
     ]);
   });
 
-  it('adet parametresine uyar', () => {
-    expect(onizlemeUret(`X ${YER_TUTUCU}`, SATIRLAR, 1)).toEqual(['X karda']);
+  it('honors the count parameter', () => {
+    expect(buildPreviews(`X ${PLACEHOLDER}`, ROWS, 1)).toEqual(['X karda']);
   });
 
-  it('satır sayısı adetten azsa hepsini döner', () => {
-    expect(onizlemeUret(`X ${YER_TUTUCU}`, [SATIRLAR[0]])).toEqual(['X karda']);
+  it('returns them all when there are fewer rows than count', () => {
+    expect(buildPreviews(`X ${PLACEHOLDER}`, [ROWS[0]])).toEqual(['X karda']);
   });
 
-  it('birden fazla yer tutucunun hepsini değiştirir', () => {
-    expect(onizlemeUret(`${YER_TUTUCU} ve ${YER_TUTUCU}`, [SATIRLAR[0]], 1)).toEqual([
+  it('replaces every one of multiple placeholders', () => {
+    expect(buildPreviews(`${PLACEHOLDER} ve ${PLACEHOLDER}`, [ROWS[0]], 1)).toEqual([
       'karda ve karda',
     ]);
   });
 
-  it('yer tutucu yoksa boş dizi döner, fırlatmaz', () => {
-    expect(onizlemeUret('Bir kedi', SATIRLAR)).toEqual([]);
+  it('returns an empty array instead of throwing when the placeholder is missing', () => {
+    expect(buildPreviews('Bir kedi', ROWS)).toEqual([]);
   });
 
-  it('satır yoksa boş dizi döner', () => {
-    expect(onizlemeUret(`X ${YER_TUTUCU}`, [])).toEqual([]);
+  it('returns an empty array when there are no rows', () => {
+    expect(buildPreviews(`X ${PLACEHOLDER}`, [])).toEqual([]);
   });
 });

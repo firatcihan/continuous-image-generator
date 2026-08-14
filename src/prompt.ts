@@ -1,20 +1,21 @@
-import type { Satir } from './tipler.js';
+import type { Row } from './types.js';
 
-export const YER_TUTUCU = '{VARYASYON}';
+/** User-facing placeholder — kept Turkish, it lives inside users' saved prompts. */
+export const PLACEHOLDER = '{VARYASYON}';
 
-export function promptOlustur(basePrompt: string, metin: string): string {
-  if (!basePrompt.includes(YER_TUTUCU)) {
-    throw new Error(`basePrompt içinde ${YER_TUTUCU} yer tutucusu bulunamadı`);
+export function buildPrompt(basePrompt: string, text: string): string {
+  if (!basePrompt.includes(PLACEHOLDER)) {
+    throw new Error(`basePrompt içinde ${PLACEHOLDER} yer tutucusu bulunamadı`);
   }
-  return basePrompt.replaceAll(YER_TUTUCU, metin);
+  return basePrompt.replaceAll(PLACEHOLDER, text);
 }
 
-export function yerTutucuVarMi(basePrompt: string): boolean {
-  return basePrompt.includes(YER_TUTUCU);
+export function hasPlaceholder(basePrompt: string): boolean {
+  return basePrompt.includes(PLACEHOLDER);
 }
 
-/** İlk `adet` satırın gerçekte gönderilecek halini üretir. Yer tutucu yoksa boş dizi. */
-export function onizlemeUret(basePrompt: string, satirlar: Satir[], adet = 3): string[] {
-  if (!yerTutucuVarMi(basePrompt)) return [];
-  return satirlar.slice(0, adet).map((satir) => promptOlustur(basePrompt, satir.metin));
+/** Renders the first `count` rows as they would actually be sent. Empty when there is no placeholder. */
+export function buildPreviews(basePrompt: string, rows: Row[], count = 3): string[] {
+  if (!hasPlaceholder(basePrompt)) return [];
+  return rows.slice(0, count).map((row) => buildPrompt(basePrompt, row.metin));
 }

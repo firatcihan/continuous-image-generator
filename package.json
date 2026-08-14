@@ -1,9 +1,10 @@
 {
-  "name": "chatgpt-gorsel-uretici",
+  "name": "chatgpt-continuous-image-generator",
   "private": true,
   "type": "module",
   "scripts": {
-    "baslat": "tsx src/baslat.ts",
+    "start": "tsx src/start.ts",
+    "baslat": "yarn start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

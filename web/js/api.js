@@ -1,64 +1,64 @@
-/** Tüm HTTP çağrıları buradan geçer; hata gövdesi Error.message'a çevrilir. */
-async function istek(yol, secenekler = {}) {
-  const yanit = await fetch(yol, {
-    ...secenekler,
-    headers: { 'content-type': 'application/json', ...(secenekler.headers ?? {}) },
+/** Every HTTP call goes through here; the error body becomes Error.message. */
+async function request(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
   });
 
-  if (!yanit.ok) {
-    let mesaj = `${yanit.status} ${yanit.statusText}`;
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
     try {
-      const govde = await yanit.json();
-      if (govde && govde.hata) mesaj = govde.hata;
+      const body = await response.json();
+      if (body && body.error) message = body.error;
     } catch {
-      // gövde JSON değilse durum metni yeterli
+      // body is not JSON; the status text is enough
     }
-    const hata = new Error(mesaj);
-    hata.durumKodu = yanit.status;
-    throw hata;
+    const error = new Error(message);
+    error.statusCode = response.status;
+    throw error;
   }
 
-  if (yanit.status === 204) return null;
-  const tur = yanit.headers.get('content-type') ?? '';
-  return tur.includes('application/json') ? yanit.json() : yanit.text();
+  if (response.status === 204) return null;
+  const type = response.headers.get('content-type') ?? '';
+  return type.includes('application/json') ? response.json() : response.text();
 }
 
 export const api = {
-  projeler: () => istek('/api/projeler'),
-  proje: (id) => istek(`/api/projeler/${id}`),
-  projeOlustur: (ad) =>
-    istek('/api/projeler', { method: 'POST', body: JSON.stringify({ ad }) }),
-  projeKaydet: (id, proje) =>
-    istek(`/api/projeler/${id}`, { method: 'PUT', body: JSON.stringify(proje) }),
-  projeSil: (id, gorselleriSil) =>
-    istek(`/api/projeler/${id}${gorselleriSil ? '?gorselleriSil=1' : ''}`, { method: 'DELETE' }),
-  onizleme: (id, basePrompt, satirlar) =>
-    istek(`/api/projeler/${id}/onizleme`, {
+  projects: () => request('/api/projects'),
+  project: (id) => request(`/api/projects/${id}`),
+  createProject: (name) =>
+    request('/api/projects', { method: 'POST', body: JSON.stringify({ name }) }),
+  saveProject: (id, project) =>
+    request(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(project) }),
+  deleteProject: (id, deleteImages) =>
+    request(`/api/projects/${id}${deleteImages ? '?deleteImages=1' : ''}`, { method: 'DELETE' }),
+  preview: (id, basePrompt, rows) =>
+    request(`/api/projects/${id}/preview`, {
       method: 'POST',
-      body: JSON.stringify({ basePrompt, satirlar }),
+      body: JSON.stringify({ basePrompt, rows }),
     }),
-  galeri: (id) => istek(`/api/projeler/${id}/galeri`),
-  klasoruAc: (id) => istek(`/api/projeler/${id}/klasoru-ac`, { method: 'POST' }),
+  gallery: (id) => request(`/api/projects/${id}/gallery`),
+  openFolder: (id) => request(`/api/projects/${id}/open-folder`, { method: 'POST' }),
 
-  is: () => istek('/api/is'),
-  isBaslat: (projeId) =>
-    istek('/api/is/baslat', { method: 'POST', body: JSON.stringify({ projeId }) }),
-  isDuraklat: () => istek('/api/is/duraklat', { method: 'POST' }),
-  isDevam: () => istek('/api/is/devam', { method: 'POST' }),
-  isDurdur: () => istek('/api/is/durdur', { method: 'POST' }),
-  kullaniciHazir: () => istek('/api/is/kullanici-hazir', { method: 'POST' }),
+  job: () => request('/api/job'),
+  startJob: (projectId) =>
+    request('/api/job/start', { method: 'POST', body: JSON.stringify({ projectId }) }),
+  pauseJob: () => request('/api/job/pause', { method: 'POST' }),
+  resumeJob: () => request('/api/job/resume', { method: 'POST' }),
+  stopJob: () => request('/api/job/stop', { method: 'POST' }),
+  userReady: () => request('/api/job/user-ready', { method: 'POST' }),
 
-  tarayici: () => istek('/api/tarayici'),
-  tarayiciAc: () => istek('/api/tarayici/ac', { method: 'POST' }),
+  browser: () => request('/api/browser'),
+  openBrowser: () => request('/api/browser/open', { method: 'POST' }),
 
-  // CSV ayrıştırma sunucuda; tarayıcıda ikinci bir ayrıştırıcı tutulmuyor
-  csvAyristir: (icerik) =>
-    istek('/api/csv/ayristir', { method: 'POST', body: JSON.stringify({ icerik }) }),
-  scriptAyristir: (icerik) =>
-    istek('/api/script/ayristir', { method: 'POST', body: JSON.stringify({ icerik }) }),
+  // CSV parsing happens on the server; no second parser is kept in the browser
+  parseCsv: (content) =>
+    request('/api/csv/parse', { method: 'POST', body: JSON.stringify({ content }) }),
+  parseScript: (content) =>
+    request('/api/script/parse', { method: 'POST', body: JSON.stringify({ content }) }),
 };
 
-/** Görsel URL'si — <img src> için. */
-export function gorselUrl(projeId, dosyaAdi) {
-  return `/api/projeler/${projeId}/gorsel/${encodeURIComponent(dosyaAdi)}`;
+/** Image URL — for <img src>. */
+export function imageUrl(projectId, fileName) {
+  return `/api/projects/${projectId}/image/${encodeURIComponent(fileName)}`;
 }

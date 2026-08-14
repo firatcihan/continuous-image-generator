@@ -1,60 +1,62 @@
-import { dosyaAdiTemizle } from './liste.js';
-import type { Satir } from './tipler.js';
+import { sanitizeFileName } from './list.js';
+import type { Row } from './types.js';
 
 /**
- * Yalnızca parantez ya da köşeli parantez içindeki damga. Çıplak `9:30`
- * KASITLA dışarıda: konuşma metninde geçen "saat 9:30'da" scripti yanlış
- * yerden bölerdi.
+ * Only stamps inside parentheses or square brackets. A bare `9:30` is
+ * DELIBERATELY excluded: "saat 9:30'da" inside spoken text would split the
+ * script at the wrong place.
  */
-const DAMGA = /[(\[]\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*[)\]]/g;
+const STAMP = /[(\[]\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*[)\]]/g;
 
 /**
- * Zaman damgalı script'i satırlara çevirir. Damga **i**'den ÖNCEKİ parça damga
- * **i** ile adlanır — kullanıcı görselin videoda hangi ana kadar süreceğini
- * dosya adından okuyor. Son damgadan sonraki parçayı bitiren bir damga yok;
- * `_son` eki hem onu adlandırır hem de aynı damgayla çakışmasını önler.
+ * Converts a time-stamped script into rows. The piece BEFORE stamp **i** is
+ * named after stamp **i** — the user reads from the file name up to which
+ * moment of the video the image lasts. No stamp terminates the piece after
+ * the last stamp; the `_son` suffix both names it and avoids clashing with
+ * that same stamp.
  */
-export function scriptiSatirlaraCevir(icerik: string): Satir[] {
-  const damgalar = [...icerik.matchAll(DAMGA)].map((eslesme) => ({
-    deger: eslesme[1],
-    bas: eslesme.index ?? 0,
-    son: (eslesme.index ?? 0) + eslesme[0].length,
+export function scriptToRows(content: string): Row[] {
+  const stamps = [...content.matchAll(STAMP)].map((match) => ({
+    value: match[1],
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
   }));
-  if (damgalar.length === 0) {
+  if (stamps.length === 0) {
     throw new Error('Script içinde (0:00) biçiminde zaman damgası bulunamadı');
   }
 
-  const parcalar: { metin: string; ad: string }[] = [];
-  let imlec = 0;
-  for (const damga of damgalar) {
-    parcalar.push({ metin: icerik.slice(imlec, damga.bas), ad: damga.deger });
-    imlec = damga.son;
+  const pieces: { text: string; name: string }[] = [];
+  let cursor = 0;
+  for (const stamp of stamps) {
+    pieces.push({ text: content.slice(cursor, stamp.start), name: stamp.value });
+    cursor = stamp.end;
   }
-  const sonDamga = damgalar[damgalar.length - 1].deger;
-  parcalar.push({ metin: icerik.slice(imlec), ad: `${sonDamga}_son` });
+  const lastStamp = stamps[stamps.length - 1].value;
+  pieces.push({ text: content.slice(cursor), name: `${lastStamp}_son` });
 
-  const satirlar: Satir[] = [];
-  const gorulen = new Map<string, number>();
-  for (const parca of parcalar) {
-    const metin = bosluklariSikistir(parca.metin);
-    if (metin === '') continue; // iki ardışık damga arası boş — satır üretmez
-    satirlar.push({ metin, dosyaAdi: tekilAd(dosyaAdiTemizle(parca.ad), gorulen) });
+  const rows: Row[] = [];
+  const seen = new Map<string, number>();
+  for (const piece of pieces) {
+    const metin = collapseWhitespace(piece.text);
+    if (metin === '') continue; // empty gap between two consecutive stamps — no row
+    rows.push({ metin, dosyaAdi: uniqueName(sanitizeFileName(piece.name), seen) });
   }
-  if (satirlar.length === 0) throw new Error('Script içinde çevrilecek metin yok');
-  return satirlar;
+  if (rows.length === 0) throw new Error('Script içinde çevrilecek metin yok');
+  return rows;
 }
 
-/** Metin `{VARYASYON}` yerine geçip prompt kutusuna yazılıyor; satır sonunun orada anlamı yok. */
-function bosluklariSikistir(metin: string): string {
-  return metin.replace(/\s+/g, ' ').trim();
+/** The text replaces `{VARYASYON}` inside the prompt box; line breaks carry no meaning there. */
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Aynı damga iki kez geçerse ikinci ad `_2` olur. Tekrar eden dosya adı kaydı
- * 400'e düşürürdü; kullanıcı da hangi satırı elle değiştireceğini bilemezdi.
+ * When the same stamp appears twice the second name becomes `_2`. A duplicate
+ * file name would turn the save into a 400, and the user could not tell which
+ * row to fix by hand.
  */
-function tekilAd(ad: string, gorulen: Map<string, number>): string {
-  const adet = (gorulen.get(ad) ?? 0) + 1;
-  gorulen.set(ad, adet);
-  return adet === 1 ? ad : `${ad}_${adet}`;
+function uniqueName(name: string, seen: Map<string, number>): string {
+  const count = (seen.get(name) ?? 0) + 1;
+  seen.set(name, count);
+  return count === 1 ? name : `${name}_${count}`;
 }

@@ -1,126 +1,136 @@
-# ChatGPT Görsel Üretici
+[![EN](https://img.shields.io/badge/lang-English-blue.svg)](README.md) [![TR](https://img.shields.io/badge/dil-T%C3%BCrk%C3%A7e-red.svg)](README.tr.md)
 
-ChatGPT web arayüzünü otomatize ederek bir base prompt'un varyasyonlarıyla
-toplu (100-200 adet) görsel üretir ve her birini sizin verdiğiniz adla klasöre
-kaydeder. Limite takılırsa bekler, kaldığı yerden devam eder.
+# ChatGPT Image Generator
 
-## Amaç
+Automates the ChatGPT web UI to batch-generate images (100-200 at a time)
+from variations of a base prompt, saving each one into a folder under the
+name you provide. When it hits a rate limit it waits and resumes where it
+left off.
 
-İçerik üreticilerinin görsel maliyetini düşürmek. Bir videonun her sahnesi,
-bir blog serisinin her yazısı için görsel gerektiğinde API veya ücretli görsel
-araçları adet başına para yazar — 200 görsel gerçek bir fatura demektir.
+## Purpose
 
-Bu proje **OpenAI API kullanmaz**: hâlihazırda ödediğiniz ChatGPT
-aboneliğinizle, tarayıcı otomasyonu (Playwright) üzerinden üretir. Ek adet
-maliyeti yok, gece boyu çalışır, sabah klasör dolu olur.
+Cutting the image cost for content creators. When every scene of a video or
+every post of a blog series needs an image, APIs and paid image tools charge
+per unit — 200 images is a real bill.
 
-## Kurulum
+This project **does not use the OpenAI API**: it generates through browser
+automation (Playwright) using the ChatGPT subscription you already pay for.
+No per-image cost; it runs through the night and the folder is full in the
+morning.
 
-Node 20+ ve yarn gerekir.
+> Note: the web interface is currently Turkish-only.
+
+## Setup
+
+Requires Node 20+ and yarn.
 
 ```bash
 git clone https://github.com/firatcihan/chatgpt-continuous-image-generator.git
 cd chatgpt-continuous-image-generator
 yarn install
 yarn playwright install chromium
-yarn baslat
+yarn start
 ```
 
-Terminalde tek kullanımlık token taşıyan adres yazılır ve tarayıcınızda açılır:
+The terminal prints an address carrying a single-use token and opens it in
+your browser:
 
 ```
   ChatGPT Görsel Üretici çalışıyor:
   http://127.0.0.1:53124/?t=…
 ```
 
-Sunucu yalnızca `127.0.0.1`'e bağlanır ve her istek token ister; adresi
-paylaşmayın.
+The server binds only to `127.0.0.1` and every request requires the token;
+do not share the address.
 
-### AI agent'a verilecek prompt
+### Prompt to hand an AI agent
 
-Kurulumu kendiniz yapmak istemiyorsanız aşağıdakini bir AI agent'a (Claude
-Code, Cursor, Codex…) verin:
+If you don't want to set it up yourself, give the following to an AI agent
+(Claude Code, Cursor, Codex…):
 
 ```
-https://github.com/firatcihan/chatgpt-continuous-image-generator reposunu
-ev dizinime klonla ve çalıştır:
+Clone the https://github.com/firatcihan/chatgpt-continuous-image-generator
+repo into my home directory and run it:
 
 1. git clone https://github.com/firatcihan/chatgpt-continuous-image-generator.git
-2. Proje klasörüne gir.
-3. Node 20+ ve yarn kurulu mu bak; yoksa bu makinede nasıl kurulacağını söyle
-   ve dur.
+2. Enter the project folder.
+3. Check that Node 20+ and yarn are installed; if not, tell me how to
+   install them on this machine and stop.
 4. yarn install
 5. yarn playwright install chromium
-6. yarn baslat  (bu komut sunucuyu açık tutar, arka planda çalıştır)
-7. Terminalde yazan http://127.0.0.1:PORT/?t=... adresini bana ver.
+6. yarn start  (this command keeps the server running; run it in the background)
+7. Give me the http://127.0.0.1:PORT/?t=... address printed in the terminal.
 
-Kod tarafında hiçbir şey değiştirme. Bir adım hata verirse hatayı olduğu gibi
-yaz ve dur.
+Do not change anything in the code. If a step fails, print the error
+verbatim and stop.
 ```
 
-## Kullanım
+## Usage
 
-1. **`1 · Tarayıcıyı aç`** — Chromium açılır, chatgpt.com'a gider. İlk kez
-   ChatGPT'ye elle giriş yapın; çerezler kalıcı profile yazılır, bir daha
-   istenmez.
-2. Sol panelde **+** ile proje açın (yalnızca ad yeter).
-3. **Base prompt** yazın; `{VARYASYON}` yer tutucusu her satırın metniyle
-   değiştirilir.
-4. **Satırlar**: `metin` + `dosya adı`. Tablo, CSV veya zaman damgalı
-   (`(0:12)`) bir script yapıştırarak doldurulabilir.
-5. **`2 · Başlat`** — yeni sohbet → prompt → görseli bekle → indir → sıradaki
-   satır. Değişiklikler otomatik kaydedilir.
+1. **`1 · Tarayıcıyı aç`** (Open the browser) — Chromium opens and navigates
+   to chatgpt.com. Log in to ChatGPT manually the first time; the cookies are
+   written to a persistent profile and never asked for again.
+2. Create a project with **+** in the left panel (a name is all it takes).
+3. Write the **base prompt**; the `{VARYASYON}` placeholder is replaced with
+   each row's text.
+4. **Rows**: `text` + `file name`. Fill them via the table, by pasting CSV,
+   or by pasting a time-stamped (`(0:12)`) script.
+5. **`2 · Başlat`** (Start) — new chat → prompt → wait for the image →
+   download → next row. Changes save automatically.
 
-Aynı anda tek iş çalışır. Program sizden bir şey beklediğinde (oturum düştü,
-yanlış model) sağ kolonda kart çıkar.
+Only one job runs at a time. When the program needs you (session dropped,
+wrong model) a card appears in the right column.
 
-Bir satır, çıktı PNG'si diskte varsa "bitti" sayılır — bu yüzden ne zaman
-durdurursanız kaldığı yerden devam eder, ve iki proje aynı çıktı klasörünü
-kullanamaz.
+A row counts as "done" when its output PNG exists on disk — so whenever you
+stop, it resumes where it left off, and two projects can never share one
+output folder.
 
-## Ayarlar
+## Settings
 
-Proje adının yanındaki dişliden açılır, her proje bağımsızdır.
+Opened from the gear next to the project name; every project is independent.
 
-| Alan | Açıklama |
+| Field | Description |
 |---|---|
-| `Çıktı klasörü` | Görsellerin kaydedileceği klasör. |
-| `Satır arası bekleme` | İki görsel arası rastgele bekleme `[min, maks]` sn. |
-| `Beklenen model adı` | Ör. `GPT-5`. Aktif model bunu içermiyorsa iş duraklar. |
-| `Üretim zaman aşımı` | Bir görsel için azami bekleme (sn). |
-| `Tekrar deneme sayısı` | Hata/zaman aşımında satır başına deneme. |
-| `Limit varsayılan bekleme` | Limit mesajında süre yoksa beklenecek dakika. |
-| `Eş zamanlı sekme` | 1-4. Kazanç darboğaza bağlı: gecikme ise ~N kat hızlanır, ChatGPT kotası ise kazanç yok. Varsayılan `1`; 2'de deneyip `calisma.log`'a bakın. |
+| `Çıktı klasörü` (Output folder) | Folder the images are saved into. |
+| `Satır arası bekleme` (Between-rows wait) | Random wait between two images, `[min, max]` sec. |
+| `Beklenen model adı` (Expected model name) | E.g. `GPT-5`. The job pauses when the active model doesn't contain it. |
+| `Üretim zaman aşımı` (Generation timeout) | Maximum wait per image (sec). |
+| `Tekrar deneme sayısı` (Retry count) | Attempts per row on error/timeout. |
+| `Limit varsayılan bekleme` (Default limit wait) | Minutes to wait when the limit message has no duration. |
+| `Eş zamanlı sekme` (Concurrent tabs) | 1-4. The gain depends on the bottleneck: with latency it's ~N×, with the ChatGPT quota there's none. Default `1`; try 2 and check `calisma.log`. |
 
-## Veriler nerede
+## Where the data lives
 
-| Yol | İçerik |
+The folder and file names below are the on-disk contract of existing
+installs, so they stay Turkish.
+
+| Path | Contents |
 |---|---|
-| `~/.chatgpt-gorsel-uretici/projeler/` | Proje başına bir JSON. |
-| `~/.chatgpt-gorsel-uretici/chrome_profil/` | ChatGPT giriş çerezleri. |
-| `~/.chatgpt-gorsel-uretici/calisma.log` | Çalışma kaydı. |
-| `~/ChatGPT-Gorseller/<slug>/` | Çıktı: `<dosya_adi>.png` + `basarisizlar.csv`. |
+| `~/.chatgpt-gorsel-uretici/projeler/` | One JSON per project. |
+| `~/.chatgpt-gorsel-uretici/chrome_profil/` | ChatGPT login cookies. |
+| `~/.chatgpt-gorsel-uretici/calisma.log` | Run log. |
+| `~/ChatGPT-Gorseller/<slug>/` | Output: `<file_name>.png` + `basarisizlar.csv` (failed rows). |
 
-Kökler `GORSEL_VERI_KOKU`, `GORSEL_CIKTI_KOKU` ve `PORT` ile taşınabilir.
+The roots can be moved with `GORSEL_VERI_KOKU`, `GORSEL_CIKTI_KOKU` and `PORT`.
 
-## Sorun giderme
+## Troubleshooting
 
-- **Görsel/buton bulunamıyor:** ChatGPT arayüzü değişmiş. Tüm DOM seçicileri
-  `src/seciciler.ts` içinde tek dosyada.
-- **Limit/red mesajı yakalanmıyor:** Kalıplar `src/rateLimit.ts` ve
-  `src/tarayici.ts` içinde; yeni biçimi regex olarak ekleyin.
-- **Arayüz 401 diyor:** Adresteki `?t=…` eskimiş. Terminaldeki güncel adresi
-  kullanın.
-- **Başarısız satırlar:** `basarisizlar.csv`'yi CSV moduna yapıştırıp işi
-  yeniden başlatın; üretilmiş görseller atlanır.
+- **Image/button not found:** the ChatGPT UI changed. All DOM selectors live
+  in one file, `src/selectors.ts`.
+- **Limit/refusal message not caught:** the patterns live in
+  `src/rateLimit.ts` and `src/browser.ts`; add the new wording as a regex.
+- **The UI says 401:** the `?t=…` in the address expired. Use the current
+  address from the terminal.
+- **Failed rows:** paste `basarisizlar.csv` into CSV mode and restart the
+  job; already-generated images are skipped.
 
-## Geliştirme
+## Development
 
 ```bash
 yarn test        # vitest
 yarn typecheck
 ```
 
-Playwright'a dokunan tek modül `src/tarayici.ts`; tarayıcı `src/baslat.ts`'ten
-enjekte edilir, geri kalan mantık birim testlidir. Arayüz `web/` altında
-derleme adımı olmayan yerel ES modülleridir.
+The only module touching Playwright is `src/browser.ts`; the browser is
+injected from `src/start.ts` and the rest of the logic is unit-tested. The
+UI under `web/` is plain local ES modules with no build step.

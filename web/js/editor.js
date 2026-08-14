@@ -1,231 +1,235 @@
 import { api } from './api.js';
-import { durum, guncelle, projeCalisiyorMu } from './durum.js';
-import { gecersizIsaretle, kaydetmeyiPlanla } from './kaydet.js';
+import { state, isProjectRunning } from './status.js';
+import { markInvalid, scheduleSave } from './save.js';
 
 const $ = (id) => document.getElementById(id);
 
-const AYAR_ALANLARI = [
-  { anahtar: 'modelAdi', etiket: 'Beklenen model adı', tur: 'text',
-    ipucu: 'Boş bırakılırsa model kontrolü atlanır.' },
-  { anahtar: 'uretimZamanAsimiSn', etiket: 'Üretim zaman aşımı (sn)', tur: 'number' },
-  { anahtar: 'tekrarDenemeSayisi', etiket: 'Tekrar deneme sayısı', tur: 'number' },
-  { anahtar: 'rateLimitVarsayilanBeklemeDk', etiket: 'Limit varsayılan bekleme (dk)', tur: 'number' },
-  { anahtar: 'esZamanliSekme', etiket: 'Eş zamanlı sekme', tur: 'number', maks: 4,
-    ipucu: '1 = sırayla. Yükseltmek üretimi hızlandırır, ama ChatGPT kotası hesap '
+// `key` values are persisted ProjectSettings field names (Turkish, on-disk
+// schema); `label`/`hint` are user-facing UI text (Turkish by design).
+const SETTING_FIELDS = [
+  { key: 'modelAdi', label: 'Beklenen model adı', type: 'text',
+    hint: 'Boş bırakılırsa model kontrolü atlanır.' },
+  { key: 'uretimZamanAsimiSn', label: 'Üretim zaman aşımı (sn)', type: 'number' },
+  { key: 'tekrarDenemeSayisi', label: 'Tekrar deneme sayısı', type: 'number' },
+  { key: 'rateLimitVarsayilanBeklemeDk', label: 'Limit varsayılan bekleme (dk)', type: 'number' },
+  { key: 'esZamanliSekme', label: 'Eş zamanlı sekme', type: 'number', max: 4,
+    hint: '1 = sırayla. Yükseltmek üretimi hızlandırır, ama ChatGPT kotası hesap '
       + 'başınadır — limit daha erken gelebilir.' },
 ];
 
-/** Formdaki her şeyi okuyup tam bir proje nesnesi kurar. */
-export function formdanProje() {
-  const temel = durum.aktifProje;
-  if (temel === null) return null;
+/** Reads everything in the form and builds a complete project object. */
+export function projectFromForm() {
+  const base = state.activeProject;
+  if (base === null) return null;
 
   return {
-    ...temel,
+    ...base,
     basePrompt: $('basePrompt').value,
-    script: $('scriptAlani').value,
-    ciktiKlasoru: $('ayar-ciktiKlasoru').value.trim(),
-    // Satırların tek gerçek kaynağı durum.js; liste.js yazar, burası okur
-    satirlar: durum.satirGecerli ? durum.satirlar.map((s) => ({ ...s })) : null,
+    script: $('scriptArea').value,
+    ciktiKlasoru: $('setting-ciktiKlasoru').value.trim(),
+    // The single source of truth for rows is status.js; list.js writes, this reads
+    satirlar: state.rowsValid ? state.rows.map((r) => ({ ...r })) : null,
     ayarlar: {
-      modelAdi: $('ayar-modelAdi').value,
-      satirArasiBekleme: [Number($('ayar-beklemeMin').value), Number($('ayar-beklemeMaks').value)],
-      uretimZamanAsimiSn: Number($('ayar-uretimZamanAsimiSn').value),
-      tekrarDenemeSayisi: Number($('ayar-tekrarDenemeSayisi').value),
-      rateLimitVarsayilanBeklemeDk: Number($('ayar-rateLimitVarsayilanBeklemeDk').value),
-      esZamanliSekme: Number($('ayar-esZamanliSekme').value),
+      modelAdi: $('setting-modelAdi').value,
+      satirArasiBekleme: [Number($('setting-waitMin').value), Number($('setting-waitMax').value)],
+      uretimZamanAsimiSn: Number($('setting-uretimZamanAsimiSn').value),
+      tekrarDenemeSayisi: Number($('setting-tekrarDenemeSayisi').value),
+      rateLimitVarsayilanBeklemeDk: Number($('setting-rateLimitVarsayilanBeklemeDk').value),
+      esZamanliSekme: Number($('setting-esZamanliSekme').value),
     },
   };
 }
 
-/** Kaydetmeden önceki istemci tarafı doğrulama. Hata metni veya null döner. */
-function projeyiDogrula(proje) {
-  const [min, maks] = proje.ayarlar.satirArasiBekleme;
-  if (!Number.isFinite(min) || !Number.isFinite(maks) || min < 0 || min > maks) {
+/** Client-side validation before saving. Returns an error text or null. */
+function validateProject(project) {
+  const [min, max] = project.ayarlar.satirArasiBekleme;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || min > max) {
     return 'Bekleme aralığı geçersiz (min ≤ maks olmalı)';
   }
-  for (const alan of ['uretimZamanAsimiSn', 'tekrarDenemeSayisi', 'rateLimitVarsayilanBeklemeDk']) {
-    if (!Number.isFinite(proje.ayarlar[alan]) || proje.ayarlar[alan] <= 0) {
-      return `${alan} pozitif bir sayı olmalı`;
+  for (const field of ['uretimZamanAsimiSn', 'tekrarDenemeSayisi', 'rateLimitVarsayilanBeklemeDk']) {
+    if (!Number.isFinite(project.ayarlar[field]) || project.ayarlar[field] <= 0) {
+      return `${field} pozitif bir sayı olmalı`;
     }
   }
-  const sekme = proje.ayarlar.esZamanliSekme;
-  if (!Number.isInteger(sekme) || sekme < 1 || sekme > 4) {
+  const tabs = project.ayarlar.esZamanliSekme;
+  if (!Number.isInteger(tabs) || tabs < 1 || tabs > 4) {
     return 'Eş zamanlı sekme 1 ile 4 arasında tam sayı olmalı';
   }
-  if (proje.satirlar === null) return 'Satır listesi geçersiz';
-  if (proje.ciktiKlasoru === '') return 'Çıktı klasörü boş olamaz';
+  if (project.satirlar === null) return 'Satır listesi geçersiz';
+  if (project.ciktiKlasoru === '') return 'Çıktı klasörü boş olamaz';
   return null;
 }
 
-/** Değişiklik oldu: önizlemeyi tazele, doğrula, kaydetmeyi planla. */
-export async function degisiklikBildir() {
-  const proje = formdanProje();
-  if (proje === null) return;
+/** Something changed: refresh the preview, validate, schedule a save. */
+export async function notifyChange() {
+  const project = projectFromForm();
+  if (project === null) return;
 
-  const hata = projeyiDogrula(proje);
-  if (hata !== null) {
-    gecersizIsaretle(hata);
+  const error = validateProject(project);
+  if (error !== null) {
+    markInvalid(error);
   } else {
-    kaydetmeyiPlanla(proje);
+    scheduleSave(project);
   }
 
-  await onizlemeyiTazele(proje);
-  kaydetGostergesiniCiz();
+  await refreshPreview(project);
+  renderSaveIndicator();
 }
 
 /**
- * Önizleme isteği ağ hatası ya da beklenmeyen bir sunucu yanıtıyla
- * reddedebilir (ör. bağlantı koptu). Bu, otomatik kaydetmeyi ETKİLEMEMELİ —
- * doğrulama ve `kaydetmeyiPlanla` zaten önizlemeden bağımsız çalışıyor.
- * Yakalanmazsa `degisiklikBildir` içindeki `await` burada patlar,
- * `kaydetGostergesiniCiz()` hiç çalışmaz ve konsolda yakalanmamış bir
- * reddetme belirir (`editoruCiz`'in ateşle-unut çağrısında da aynı risk var).
+ * The preview request can reject on a network failure or an unexpected
+ * server response (e.g. dropped connection). That must NOT affect autosave —
+ * validation and `scheduleSave` already run independently of the preview.
+ * Uncaught, the `await` inside `notifyChange` would blow up here,
+ * `renderSaveIndicator()` would never run, and an unhandled rejection would
+ * appear in the console (the fire-and-forget call in `renderEditor` carries
+ * the same risk).
  */
-async function onizlemeyiTazele(proje) {
+async function refreshPreview(project) {
   try {
-    const sonuc = await api.onizleme(proje.id, proje.basePrompt, proje.satirlar ?? []);
+    const result = await api.preview(project.id, project.basePrompt, project.satirlar ?? []);
 
-    $('promptUyari').hidden = sonuc.yerTutucuVar;
-    $('promptUyari').textContent =
+    $('promptWarning').hidden = result.hasPlaceholder;
+    $('promptWarning').textContent =
       'Prompt içinde {VARYASYON} yok — her satır aynı görseli üretirdi';
-    $('basePrompt').classList.toggle('hatali', !sonuc.yerTutucuVar);
+    $('basePrompt').classList.toggle('invalid', !result.hasPlaceholder);
 
-    const liste = $('onizleme');
-    liste.textContent = '';
-    for (const metin of sonuc.onizleme) {
-      const oge = document.createElement('li');
-      oge.textContent = metin;
-      liste.append(oge);
+    const list = $('preview');
+    list.textContent = '';
+    for (const text of result.previews) {
+      const item = document.createElement('li');
+      item.textContent = text;
+      list.append(item);
     }
-  } catch (hata) {
-    // Önizleme salt görsel bir yardımcı; başarısızlığı kaydetmeyi engellemez,
-    // yalnızca günlüğe düşer ki liste eski (belki yanlış) halde takılı kalırsa
-    // sebebi görülebilsin.
-    console.error('önizleme tazelenemedi:', hata);
+  } catch (error) {
+    // The preview is purely visual; its failure must not block saving. It is
+    // still logged, so if the list gets stuck stale (possibly wrong) the
+    // cause is visible.
+    console.error('önizleme tazelenemedi:', error);
   }
 }
 
-export function kaydetGostergesiniCiz() {
-  const metinler = {
-    bosta: '',
-    kaydediliyor: 'Kaydediliyor…',
-    kaydedildi: `Kaydedildi ${durum.kaydetZamani ?? ''}`,
-    gecersiz: `Geçersiz — kaydedilmedi${durum.hata ? ` (${durum.hata})` : ''}`,
+export function renderSaveIndicator() {
+  const texts = {
+    idle: '',
+    saving: 'Kaydediliyor…',
+    saved: `Kaydedildi ${state.saveTime ?? ''}`,
+    invalid: `Geçersiz — kaydedilmedi${state.error ? ` (${state.error})` : ''}`,
   };
-  $('kaydetDurum').textContent = metinler[durum.kaydetDurumu] ?? '';
+  $('saveStatus').textContent = texts[state.saveStatus] ?? '';
 }
 
-/** Hangi projenin formu doldurulmuş — alan değerlerini gereksiz yazmamak için. */
-let cizilenProjeId = null;
+/** Which project's form has been filled — avoids rewriting field values needlessly. */
+let renderedProjectId = null;
 
 /**
- * Her `guncelle()` çağrısında koşar. Alan değerleri YALNIZCA proje
- * değiştiğinde yazılır: `input.value` atamak imleci sonuna atar, kullanıcı
- * yazarken her otomatik kayıt imleci kaçırırdı.
+ * Runs on every `update()` call. Field values are written ONLY when the
+ * project changes: assigning `input.value` throws the cursor to the end, and
+ * every autosave would displace the cursor while the user types.
  */
-export function editoruCiz() {
-  const proje = durum.aktifProje;
-  if (proje === null) {
-    cizilenProjeId = null;
+export function renderEditor() {
+  const project = state.activeProject;
+  if (project === null) {
+    renderedProjectId = null;
     return;
   }
 
-  if (cizilenProjeId !== proje.id) {
-    $('basePrompt').value = proje.basePrompt;
-    $('scriptAlani').value = proje.script;
-    ayarlariCiz(proje);
-    cizilenProjeId = proje.id;
-    void onizlemeyiTazele(formdanProje());
+  if (renderedProjectId !== project.id) {
+    $('basePrompt').value = project.basePrompt;
+    $('scriptArea').value = project.script;
+    renderSettings(project);
+    renderedProjectId = project.id;
+    void refreshPreview(projectFromForm());
   }
 
-  const kilitli = projeCalisiyorMu(proje.id);
-  $('kilitUyari').hidden = !kilitli;
-  $('projeEkrani').classList.toggle('kilitli', kilitli);
+  const locked = isProjectRunning(project.id);
+  $('lockWarning').hidden = !locked;
+  $('projectScreen').classList.toggle('locked', locked);
 
-  kaydetGostergesiniCiz();
+  renderSaveIndicator();
 }
 
-function ayarlariCiz(proje) {
-  const kap = $('ayarlar');
-  if (kap.dataset.kuruldu === '1') {
-    // Alanlar zaten var; yalnızca değerleri yaz — yazarken imleç kaybolmasın
-    $('ayar-modelAdi').value = proje.ayarlar.modelAdi;
-    $('ayar-ciktiKlasoru').value = proje.ciktiKlasoru;
-    $('ayar-beklemeMin').value = proje.ayarlar.satirArasiBekleme[0];
-    $('ayar-beklemeMaks').value = proje.ayarlar.satirArasiBekleme[1];
-    for (const alan of AYAR_ALANLARI.slice(1)) {
-      $(`ayar-${alan.anahtar}`).value = proje.ayarlar[alan.anahtar];
+function renderSettings(project) {
+  const wrap = $('settings');
+  if (wrap.dataset.built === '1') {
+    // The fields already exist; only write values — no cursor loss while typing
+    $('setting-modelAdi').value = project.ayarlar.modelAdi;
+    $('setting-ciktiKlasoru').value = project.ciktiKlasoru;
+    $('setting-waitMin').value = project.ayarlar.satirArasiBekleme[0];
+    $('setting-waitMax').value = project.ayarlar.satirArasiBekleme[1];
+    for (const field of SETTING_FIELDS.slice(1)) {
+      $(`setting-${field.key}`).value = project.ayarlar[field.key];
     }
     return;
   }
 
-  kap.textContent = '';
+  wrap.textContent = '';
 
-  // Çıktı klasörü `ayarlar` içinde değil, projenin kök alanı — ama kullanıcı
-  // için bir ayar. Ad değişince otomatik değişmez (spec §3): üretilmiş
-  // görseller eski klasörde yalnız kalmasın.
-  const klasorEtiket = document.createElement('label');
-  klasorEtiket.textContent = 'Çıktı klasörü';
-  klasorEtiket.title = 'İki proje aynı klasörü kullanamaz.';
-  const klasorGirdi = document.createElement('input');
-  klasorGirdi.type = 'text';
-  klasorGirdi.id = 'ayar-ciktiKlasoru';
-  klasorGirdi.value = proje.ciktiKlasoru;
-  klasorEtiket.htmlFor = klasorGirdi.id;
-  kap.append(klasorEtiket, klasorGirdi);
+  // The output folder is not inside `ayarlar`, it is a root field of the
+  // project — but a setting to the user. It does not change automatically
+  // with the name (spec §3): produced images must not be left alone in the
+  // old folder.
+  const folderLabel = document.createElement('label');
+  folderLabel.textContent = 'Çıktı klasörü';
+  folderLabel.title = 'İki proje aynı klasörü kullanamaz.';
+  const folderInput = document.createElement('input');
+  folderInput.type = 'text';
+  folderInput.id = 'setting-ciktiKlasoru';
+  folderInput.value = project.ciktiKlasoru;
+  folderLabel.htmlFor = folderInput.id;
+  wrap.append(folderLabel, folderInput);
 
-  const beklemeEtiket = document.createElement('label');
-  beklemeEtiket.textContent = 'Satır arası bekleme (sn, min – maks)';
-  beklemeEtiket.htmlFor = 'ayar-beklemeMin'; // iki alanlı satır: etiket min'e işaret eder
-  kap.append(beklemeEtiket);
-  const beklemeKap = document.createElement('div');
-  beklemeKap.className = 'satir';
-  for (const [id, deger] of [
-    ['ayar-beklemeMin', proje.ayarlar.satirArasiBekleme[0]],
-    ['ayar-beklemeMaks', proje.ayarlar.satirArasiBekleme[1]],
+  const waitLabel = document.createElement('label');
+  waitLabel.textContent = 'Satır arası bekleme (sn, min – maks)';
+  waitLabel.htmlFor = 'setting-waitMin'; // two-field row: the label points at min
+  wrap.append(waitLabel);
+  const waitWrap = document.createElement('div');
+  waitWrap.className = 'row';
+  for (const [id, value] of [
+    ['setting-waitMin', project.ayarlar.satirArasiBekleme[0]],
+    ['setting-waitMax', project.ayarlar.satirArasiBekleme[1]],
   ]) {
-    const girdi = document.createElement('input');
-    girdi.type = 'number';
-    girdi.id = id;
-    girdi.min = '0';
-    girdi.value = String(deger);
-    beklemeKap.append(girdi);
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.id = id;
+    input.min = '0';
+    input.value = String(value);
+    waitWrap.append(input);
   }
-  kap.append(beklemeKap);
+  wrap.append(waitWrap);
 
-  // Kalan alanlar yan yana: hepsi kısa değerler, tam genişlik istemiyor.
-  const izgara = document.createElement('div');
-  izgara.className = 'ayar-izgara';
-  for (const alan of AYAR_ALANLARI) {
-    const hucre = document.createElement('div');
-    const etiket = document.createElement('label');
-    etiket.textContent = alan.etiket;
-    if (alan.ipucu) etiket.title = alan.ipucu;
-    const girdi = document.createElement('input');
-    girdi.type = alan.tur;
-    girdi.id = `ayar-${alan.anahtar}`;
-    if (alan.tur === 'number') girdi.min = '1';
-    if (alan.maks !== undefined) girdi.max = String(alan.maks);
-    girdi.value = String(proje.ayarlar[alan.anahtar]);
-    etiket.htmlFor = girdi.id;
-    hucre.append(etiket, girdi);
-    izgara.append(hucre);
+  // The remaining fields side by side: all short values, no need for full width.
+  const grid = document.createElement('div');
+  grid.className = 'settings-grid';
+  for (const field of SETTING_FIELDS) {
+    const cell = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = field.label;
+    if (field.hint) label.title = field.hint;
+    const input = document.createElement('input');
+    input.type = field.type;
+    input.id = `setting-${field.key}`;
+    if (field.type === 'number') input.min = '1';
+    if (field.max !== undefined) input.max = String(field.max);
+    input.value = String(project.ayarlar[field.key]);
+    label.htmlFor = input.id;
+    cell.append(label, input);
+    grid.append(cell);
   }
-  kap.append(izgara);
+  wrap.append(grid);
 
-  kap.dataset.kuruldu = '1';
-  kap.addEventListener('input', () => void degisiklikBildir());
+  wrap.dataset.built = '1';
+  wrap.addEventListener('input', () => void notifyChange());
 }
 
-export function editoruBagla() {
-  $('basePrompt').addEventListener('input', () => void degisiklikBildir());
+export function bindEditor() {
+  $('basePrompt').addEventListener('input', () => void notifyChange());
 
-  $('btnYerTutucu').addEventListener('click', () => {
-    const alan = $('basePrompt');
-    const bas = alan.selectionStart ?? alan.value.length;
-    alan.value = `${alan.value.slice(0, bas)}{VARYASYON}${alan.value.slice(bas)}`;
-    alan.focus();
-    void degisiklikBildir();
+  $('btnPlaceholder').addEventListener('click', () => {
+    const area = $('basePrompt');
+    const start = area.selectionStart ?? area.value.length;
+    area.value = `${area.value.slice(0, start)}{VARYASYON}${area.value.slice(start)}`;
+    area.focus();
+    void notifyChange();
   });
 }

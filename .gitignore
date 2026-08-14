@@ -5,6 +5,7 @@ calisma.log
 basarisizlar.csv
 config.json
 liste.csv
+list.csv
 .DS_Store
 .yarn/
 .playwright-mcp/

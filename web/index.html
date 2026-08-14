@@ -4,142 +4,143 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ChatGPT Görsel Üretici</title>
-<link rel="stylesheet" href="/css/stil.css">
+<link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
 
-<aside id="yanPanel">
-  <div class="yan-baslik">
+<aside id="sidePanel">
+  <div class="side-header">
     <span>Projeler</span>
-    <button id="btnYeniProje" title="Yeni proje">+</button>
+    <button id="btnNewProject" title="Yeni proje">+</button>
   </div>
-  <p id="bozukUyari" class="bozuk-uyari" hidden></p>
-  <nav id="projeListesi"></nav>
+  <p id="brokenWarning" class="broken-warning" hidden></p>
+  <nav id="projectList"></nav>
 </aside>
 
-<div id="govde">
-  <div id="isSeridi" hidden></div>
+<div id="content">
+  <div id="jobStrip" hidden></div>
 
   <header>
-    <h1 id="projeAdi">—</h1>
-    <button id="btnAyarlar" class="ikon" title="Proje ayarları">⚙</button>
-    <span id="kaydetDurum" class="soluk"></span>
-    <button id="btnTarayici">1 · Tarayıcıyı aç</button>
-    <button id="btnBaslat" class="birincil">2 · Başlat</button>
-    <button id="btnDuraklat" disabled>Duraklat</button>
-    <button id="btnDevam" disabled>Devam</button>
-    <button id="btnDurdur" disabled>Durdur</button>
+    <h1 id="projectName">—</h1>
+    <button id="btnSettings" class="icon" title="Proje ayarları">⚙</button>
+    <span id="saveStatus" class="muted"></span>
+    <button id="btnBrowser">1 · Tarayıcıyı aç</button>
+    <button id="btnStart" class="primary">2 · Başlat</button>
+    <button id="btnPause" disabled>Duraklat</button>
+    <button id="btnResume" disabled>Devam</button>
+    <button id="btnStop" disabled>Durdur</button>
   </header>
 
-  <main id="bosDurum" hidden>
+  <main id="emptyState" hidden>
     <section>
       <h2>Henüz proje yok</h2>
-      <p class="soluk">Soldaki <strong>+</strong> ile ilk projeni oluştur.</p>
+      <p class="muted">Soldaki <strong>+</strong> ile ilk projeni oluştur.</p>
     </section>
   </main>
 
-  <main id="projeEkrani" hidden>
-    <div class="kolon">
-      <section id="kilitUyari" hidden>
-        <p class="uyari-metin">Bu proje çalışıyor — alanlar salt-okunur. Düzenlemek için durdurun.</p>
+  <main id="projectScreen" hidden>
+    <div class="column">
+      <section id="lockWarning" hidden>
+        <p class="warning-text">Bu proje çalışıyor — alanlar salt-okunur. Düzenlemek için durdurun.</p>
       </section>
 
       <section>
         <h2>Base prompt</h2>
-        <textarea id="basePrompt" class="kod" rows="4"></textarea>
-        <p class="uyari-metin" id="promptUyari" hidden></p>
-        <button id="btnYerTutucu">{VARYASYON} ekle</button>
+        <textarea id="basePrompt" class="code" rows="4"></textarea>
+        <p class="warning-text" id="promptWarning" hidden></p>
+        <button id="btnPlaceholder">{VARYASYON} ekle</button>
         <h2 style="margin-top:16px">Önizleme</h2>
-        <ol id="onizleme" class="onizleme"></ol>
+        <ol id="preview" class="preview"></ol>
       </section>
 
       <section>
-        <h2>Satırlar <span id="satirSayisi" class="soluk"></span>
-          <span class="mod-anahtari">
-            <button id="btnModTablo" class="kucuk">Tablo</button>
-            <button id="btnModCsv" class="kucuk">CSV</button>
-            <button id="btnModScript" class="kucuk">Script</button>
+        <h2>Satırlar <span id="rowCount" class="muted"></span>
+          <span class="mode-switch">
+            <button id="btnModeTable" class="small">Tablo</button>
+            <button id="btnModeCsv" class="small">CSV</button>
+            <button id="btnModeScript" class="small">Script</button>
           </span>
         </h2>
-        <div id="tabloKabi"></div>
-        <textarea id="csvAlani" class="kod" rows="10" hidden></textarea>
-        <textarea id="scriptAlani" class="kod" rows="10" hidden
+        <div id="tableWrap"></div>
+        <textarea id="csvArea" class="code" rows="10" hidden></textarea>
+        <textarea id="scriptArea" class="code" rows="10" hidden
           placeholder="(0:00) Bugün hava durumundan bahsedeceğiz. Öğleden (0:09) sonra sıcaklık yükseldi."></textarea>
-        <p class="uyari-metin" id="satirUyari" hidden></p>
-        <button id="btnSatirEkle">Satır ekle</button>
-        <button id="btnCevir" class="birincil" hidden>Satırlara çevir</button>
+        <p class="warning-text" id="rowWarning" hidden></p>
+        <button id="btnAddRow">Satır ekle</button>
+        <button id="btnConvert" class="primary" hidden>Satırlara çevir</button>
       </section>
 
       <!--
-        Ayarlar diyaloğu KASITLI olarak #projeEkrani içinde duruyor: showModal()
-        onu üst katmanda çizse de DOM'daki yeri değişmez, böylece çalışan
-        projede alanları salt-okunur yapan `.kilitli input` kuralı burada da
-        geçerli olur. Kapat butonu `serbest` sınıfını taşımak zorunda — o kural
-        `button:not(.serbest)` ile butonları da devre dışı bırakıyor, aksi halde
-        kilitliyken diyalog kapatılamazdı.
+        The settings dialog DELIBERATELY lives inside #projectScreen: showModal()
+        renders it in the top layer but its DOM position is unchanged, so the
+        `.locked input` rule that makes fields read-only for a running project
+        applies here too. The close button must carry the `exempt` class — that
+        rule also disables buttons via `button:not(.exempt)`, otherwise the
+        dialog could not be closed while locked.
       -->
-      <dialog id="ayarDiyalogu">
+      <dialog id="settingsDialog">
         <h2>Proje ayarları</h2>
-        <div id="ayarlar"></div>
-        <div class="diyalog-butonlar">
-          <button id="ayarKapat" class="serbest">Kapat</button>
+        <div id="settings"></div>
+        <div class="dialog-buttons">
+          <button id="settingsClose" class="exempt">Kapat</button>
         </div>
       </dialog>
     </div>
 
-    <div class="kolon">
+    <div class="column">
       <section>
         <h2>İlerleme</h2>
-        <div id="ilerleme"></div>
-        <div id="kullaniciKarti" hidden>
-          <p class="uyari-metin" id="kullaniciMesaj"></p>
-          <button id="btnHazir" class="birincil">Giriş yaptım, devam et</button>
+        <div id="progress"></div>
+        <div id="userCard" hidden>
+          <p class="warning-text" id="userMessage"></p>
+          <button id="btnReady" class="primary">Giriş yaptım, devam et</button>
         </div>
       </section>
 
       <section>
         <h2>Galeri
-          <button id="btnKlasor" class="kucuk">Klasörü aç</button>
+          <button id="btnFolder" class="small">Klasörü aç</button>
         </h2>
-        <div id="galeri" class="galeri"></div>
+        <div id="gallery" class="gallery"></div>
       </section>
 
       <section>
         <h2>Kayıt</h2>
-        <div id="kayit" class="kayit"></div>
+        <div id="log" class="log"></div>
       </section>
     </div>
   </main>
 </div>
 
-<dialog id="silDiyalogu">
-  <h2 id="silBaslik">Projeyi sil?</h2>
-  <p id="silKlasor" class="kod soluk"></p>
-  <p id="silSayi"></p>
-  <label class="onay">
-    <input type="checkbox" id="silGorseller" checked>
+<dialog id="deleteDialog">
+  <h2 id="deleteTitle">Projeyi sil?</h2>
+  <p id="deleteFolder" class="code muted"></p>
+  <p id="deleteCount"></p>
+  <label class="confirm">
+    <input type="checkbox" id="deleteImages" checked>
     Görselleri de sil
   </label>
-  <p class="uyari-metin">Bu işlem geri alınamaz.</p>
-  <div class="diyalog-butonlar">
-    <button id="silVazgec">Vazgeç</button>
-    <button id="silOnayla" class="tehlike">Sil</button>
+  <p class="warning-text">Bu işlem geri alınamaz.</p>
+  <div class="dialog-buttons">
+    <button id="deleteCancel">Vazgeç</button>
+    <button id="deleteConfirm" class="danger">Sil</button>
   </div>
 </dialog>
 
 <!--
-  Gövde DIŞINDA: çalışan projede `#btnCevir` `.kilitli` kuralıyla sönük olduğu
-  için diyalog hiç açılamaz; `#projeEkrani` içinde durmasına gerek yok.
+  OUTSIDE the content: on a running project `#btnConvert` is dimmed by the
+  `.locked` rule so the dialog can never open; it does not need to live inside
+  `#projectScreen`.
 -->
-<dialog id="cevirDiyalogu">
+<dialog id="convertDialog">
   <h2>Satırların üzerine yazılsın mı?</h2>
-  <p id="cevirMesaj"></p>
-  <div class="diyalog-butonlar">
-    <button id="cevirVazgec">Vazgeç</button>
-    <button id="cevirOnayla" class="birincil">Devam</button>
+  <p id="convertMessage"></p>
+  <div class="dialog-buttons">
+    <button id="convertCancel">Vazgeç</button>
+    <button id="convertConfirm" class="primary">Devam</button>
   </div>
 </dialog>
 
-<script type="module" src="/js/uygulama.js"></script>
+<script type="module" src="/js/app.js"></script>
 </body>
 </html>

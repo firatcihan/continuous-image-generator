@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Kapi, type IsKapilari } from '../src/is/kapi.js';
-import type { Config, GorselSonucu, Satir, UretimSekmesi } from '../src/tipler.js';
-import { tumSatirlariIsle, type UykuSebebi, type WorkerBagimliliklari } from '../src/worker.js';
+import { Gate, type JobGates } from '../src/job/gate.js';
+import type { Config, ImageResult, Row, GenerationTab } from '../src/types.js';
+import { processAllRows, type SleepReason, type WorkerDeps } from '../src/worker.js';
 
 const CONFIG: Config = {
   basePrompt: 'Bir kedi, {VARYASYON}',
@@ -15,437 +15,438 @@ const CONFIG: Config = {
   esZamanliSekme: 1,
 };
 
-interface SahteSecenekler {
-  sonuclar?: GorselSonucu[];
-  oturum?: boolean[];
+interface FakeOptions {
+  results?: ImageResult[];
+  session?: boolean[];
   model?: string;
 }
 
-function sahteSekmeler(secenekler: SahteSecenekler = {}, adet = 1) {
-  // Diziler sekmeler arasında PAYLAŞILIR: testler sonuç sırasını kurgulayarak
-  // hangi sekmenin ne alacağını belirleyebilsin.
-  const sonuclar = [...(secenekler.sonuclar ?? [])];
-  const oturumlar = [...(secenekler.oturum ?? [])];
-  const cagrilar: string[] = [];
-  const yenidenBaslat = async () => {
-    cagrilar.push('yenidenBaslat');
+function fakeTabs(opts: FakeOptions = {}, count = 1) {
+  // The arrays are SHARED across tabs: tests can script the result order to
+  // decide which tab receives what.
+  const results = [...(opts.results ?? [])];
+  const sessions = [...(opts.session ?? [])];
+  const calls: string[] = [];
+  const restart = async () => {
+    calls.push('restart');
   };
 
-  const sekmeler: UretimSekmesi[] = Array.from({ length: adet }, () => ({
-    yeniSohbetAc: async () => {
-      cagrilar.push('yeniSohbet');
+  const tabs: GenerationTab[] = Array.from({ length: count }, () => ({
+    openNewChat: async () => {
+      calls.push('newChat');
     },
-    oturumAcikMi: async () => (oturumlar.length > 0 ? oturumlar.shift()! : true),
-    aktifModelAdi: async () => secenekler.model ?? 'GPT-5',
-    gorselUret: async () => {
-      cagrilar.push('uret');
-      return sonuclar.shift() ?? { tip: 'gorsel' };
+    isLoggedIn: async () => (sessions.length > 0 ? sessions.shift()! : true),
+    activeModelName: async () => opts.model ?? 'GPT-5',
+    generateImage: async () => {
+      calls.push('generate');
+      return results.shift() ?? { type: 'image' };
     },
-    sonGorseliKaydet: async (yol: string) => {
-      cagrilar.push(`kaydet:${yol}`);
+    saveLastImage: async (path: string) => {
+      calls.push(`save:${path}`);
     },
   }));
 
-  return { sekmeler, cagrilar, yenidenBaslat };
+  return { tabs, calls, restart };
 }
 
-function bagimliliklar(
-  sekmeler: UretimSekmesi[],
-  tarayiciYenidenBaslat: () => Promise<void>,
-  ek: Partial<WorkerBagimliliklari> = {},
-): WorkerBagimliliklari & {
-  basarisizlar: string[];
-  beklemeler: Array<{ ms: number; sebep: UykuSebebi }>;
-  onaylar: string[];
-  olaylar: string[];
-  kontrolcu: AbortController;
+function deps(
+  tabs: GenerationTab[],
+  restartBrowser: () => Promise<void>,
+  extra: Partial<WorkerDeps> = {},
+): WorkerDeps & {
+  failures: string[];
+  sleeps: Array<{ ms: number; reason: SleepReason }>;
+  confirmations: string[];
+  events: string[];
+  controller: AbortController;
 } {
-  const basarisizlar: string[] = [];
-  const beklemeler: Array<{ ms: number; sebep: UykuSebebi }> = [];
-  const onaylar: string[] = [];
-  const olaylar: string[] = [];
-  const kontrolcu = new AbortController();
+  const failures: string[] = [];
+  const sleeps: Array<{ ms: number; reason: SleepReason }> = [];
+  const confirmations: string[] = [];
+  const events: string[] = [];
+  const controller = new AbortController();
   return {
     config: CONFIG,
-    sekmeler,
-    tarayiciYenidenBaslat,
-    logger: { bilgi: vi.fn(), uyari: vi.fn(), hata: vi.fn() } as never,
-    kontrol: { signal: kontrolcu.signal, kapi: new Kapi() },
-    kapilar: { limit: new Kapi(), kullanici: new Kapi(), yenidenBaslatma: new Kapi() },
-    uyu: async (ms: number, sebep: UykuSebebi) => {
-      beklemeler.push({ ms, sebep });
+    tabs,
+    restartBrowser,
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    control: { signal: controller.signal, gate: new Gate() },
+    gates: { limit: new Gate(), user: new Gate(), restart: new Gate() },
+    sleep: async (ms: number, reason: SleepReason) => {
+      sleeps.push({ ms, reason });
     },
-    tamamlandiMi: () => false,
-    basarisizKaydet: (satir: Satir, sebep: string) => {
-      basarisizlar.push(`${satir.dosyaAdi}: ${sebep}`);
+    isCompleted: () => false,
+    recordFailure: (row: Row, reason: string) => {
+      failures.push(`${row.dosyaAdi}: ${reason}`);
     },
-    kullanicidanDevamBekle: async (mesaj: string) => {
-      onaylar.push(mesaj);
+    waitForUser: async (message: string) => {
+      confirmations.push(message);
     },
-    satirBasladi: (sira, _toplam, satir) => olaylar.push(`basladi:${sira}:${satir.dosyaAdi}`),
-    satirBitti: (sira, sonuc) => olaylar.push(`bitti:${sira}:${sonuc}`),
-    basarisizlar,
-    beklemeler,
-    onaylar,
-    olaylar,
-    kontrolcu,
-    ...ek,
+    onRowStarted: (row, _total, record) => events.push(`started:${row}:${record.dosyaAdi}`),
+    onRowFinished: (row, result) => events.push(`finished:${row}:${result}`),
+    failures,
+    sleeps,
+    confirmations,
+    events,
+    controller,
+    ...extra,
   };
 }
 
-const SATIR: Satir = { metin: 'karda', dosyaAdi: 'kedi_kar' };
+const ROW: Row = { metin: 'karda', dosyaAdi: 'kedi_kar' };
 
-describe('tumSatirlariIsle', () => {
-  it('başarılı üretimde görseli doğru yola kaydeder', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet).toEqual({ basarili: 1, atlanan: 0, basarisiz: 0 });
-    expect(cagrilar).toContain('kaydet:/tmp/cikti/kedi_kar.png');
+describe('processAllRows', () => {
+  it('saves the image to the correct path on a successful generation', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary).toEqual({ succeeded: 1, skipped: 0, failed: 0 });
+    expect(calls).toContain('save:/tmp/cikti/kedi_kar.png');
   });
 
-  it('çıktısı zaten var olan satırı atlar', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler();
-    const b = bagimliliklar(sekmeler, yenidenBaslat, { tamamlandiMi: () => true });
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet).toEqual({ basarili: 0, atlanan: 1, basarisiz: 0 });
-    expect(cagrilar).not.toContain('uret');
+  it('skips a row whose output already exists', async () => {
+    const { tabs, calls, restart } = fakeTabs();
+    const d = deps(tabs, restart, { isCompleted: () => true });
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary).toEqual({ succeeded: 0, skipped: 1, failed: 0 });
+    expect(calls).not.toContain('generate');
   });
 
-  it('rate limit gelince mesajdaki süre kadar uyur ve aynı satırı tekrar dener', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [{ tip: 'rateLimit', mesaj: 'Try again in 25 minutes.' }, { tip: 'gorsel' }],
+  it('on a rate limit sleeps as long as the message says and retries the same row', async () => {
+    const { tabs, restart } = fakeTabs({
+      results: [{ type: 'rateLimit', message: 'Try again in 25 minutes.' }, { type: 'image' }],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet.basarili).toBe(1);
-    expect(b.beklemeler).toContainEqual({ ms: 25 * 60_000, sebep: 'rateLimit' });
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary.succeeded).toBe(1);
+    expect(d.sleeps).toContainEqual({ ms: 25 * 60_000, reason: 'rateLimit' });
   });
 
-  it('süre belirtilmeyen rate limitte varsayılan süre uyur', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [{ tip: 'rateLimit', mesaj: 'Too many requests. Please try again later.' }, { tip: 'gorsel' }],
+  it('sleeps the default duration on a rate limit without a stated time', async () => {
+    const { tabs, restart } = fakeTabs({
+      results: [{ type: 'rateLimit', message: 'Too many requests. Please try again later.' }, { type: 'image' }],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    await tumSatirlariIsle(b, [SATIR]);
-    expect(b.beklemeler).toContainEqual({ ms: 15 * 60_000, sebep: 'rateLimit' });
+    const d = deps(tabs, restart);
+    await processAllRows(d, [ROW]);
+    expect(d.sleeps).toContainEqual({ ms: 15 * 60_000, reason: 'rateLimit' });
   });
 
-  it('zaman aşımı tekrar deneme sayısını aşınca başarısız yazar', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [{ tip: 'zamanAsimi' }, { tip: 'zamanAsimi' }, { tip: 'zamanAsimi' }],
+  it('records a failure once timeouts exceed the retry count', async () => {
+    const { tabs, calls, restart } = fakeTabs({
+      results: [{ type: 'timeout' }, { type: 'timeout' }, { type: 'timeout' }],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet.basarisiz).toBe(1);
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(3);
-    expect(b.basarisizlar[0]).toContain('kedi_kar');
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary.failed).toBe(1);
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(3);
+    expect(d.failures[0]).toContain('kedi_kar');
   });
 
-  it('içerik reddinde tekrar denemeden başarısız yazar ve devam eder', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [{ tip: 'red', mesaj: 'content policy' }, { tip: 'gorsel' }],
+  it('on a content refusal records a failure without retrying and moves on', async () => {
+    const { tabs, calls, restart } = fakeTabs({
+      results: [{ type: 'refusal', message: 'content policy' }, { type: 'image' }],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR, { metin: 'plajda', dosyaAdi: 'plaj' }]);
-    expect(ozet).toEqual({ basarili: 1, atlanan: 0, basarisiz: 1 });
-    expect(b.basarisizlar[0]).toContain('içerik reddi');
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(2);
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW, { metin: 'plajda', dosyaAdi: 'plaj' }]);
+    expect(summary).toEqual({ succeeded: 1, skipped: 0, failed: 1 });
+    expect(d.failures[0]).toContain('içerik reddi');
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(2);
   });
 
-  it('oturum düşünce kullanıcıyı bekler, deneme hakkı yakmaz', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({ oturum: [false, true], sonuclar: [{ tip: 'gorsel' }] });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet.basarili).toBe(1);
-    expect(b.onaylar).toHaveLength(1);
+  it('waits for the user when the session drops, burns no retry attempt', async () => {
+    const { tabs, restart } = fakeTabs({ session: [false, true], results: [{ type: 'image' }] });
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary.succeeded).toBe(1);
+    expect(d.confirmations).toHaveLength(1);
   });
 
-  it('yanlış model seçiliyse kullanıcıyı bekler', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({ model: 'GPT-4o mini' });
-    let modelDuzeltildi = false;
-    const b = bagimliliklar(sekmeler, yenidenBaslat, {
+  it('waits for the user when the wrong model is selected', async () => {
+    const { tabs, restart } = fakeTabs({ model: 'GPT-4o mini' });
+    let modelFixed = false;
+    const d = deps(tabs, restart, {
       config: { ...CONFIG, modelAdi: 'GPT-5' },
-      kullanicidanDevamBekle: async () => {
-        modelDuzeltildi = true;
-        (sekmeler[0] as { aktifModelAdi: () => Promise<string> }).aktifModelAdi = async () => 'GPT-5';
+      waitForUser: async () => {
+        modelFixed = true;
+        (tabs[0] as { activeModelName: () => Promise<string> }).activeModelName = async () => 'GPT-5';
       },
     });
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(modelDuzeltildi).toBe(true);
-    expect(ozet.basarili).toBe(1);
+    const summary = await processAllRows(d, [ROW]);
+    expect(modelFixed).toBe(true);
+    expect(summary.succeeded).toBe(1);
   });
 
-  it('tarayıcı hatasında yeniden başlatır ve tekrar dener', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    let ilkCagri = true;
-    const orijinalYeniSohbet = sekmeler[0].yeniSohbetAc;
-    sekmeler[0].yeniSohbetAc = async () => {
-      if (ilkCagri) {
-        ilkCagri = false;
+  it('restarts and retries on a browser error', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    let firstCall = true;
+    const originalNewChat = tabs[0].openNewChat;
+    tabs[0].openNewChat = async () => {
+      if (firstCall) {
+        firstCall = false;
         throw new Error('tarayıcı çöktü');
       }
-      await orijinalYeniSohbet();
+      await originalNewChat();
     };
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet.basarili).toBe(1);
-    expect(cagrilar).toContain('yenidenBaslat');
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary.succeeded).toBe(1);
+    expect(calls).toContain('restart');
   });
 
-  it('başka işçi yeniden başlatırken düşen sekme deneme hakkı yakmaz', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    const kapilar: IsKapilari = {
-      limit: new Kapi(),
-      kullanici: new Kapi(),
-      yenidenBaslatma: new Kapi(),
+  it('a tab failing while another worker restarts burns no retry attempt', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const gates: JobGates = {
+      limit: new Gate(),
+      user: new Gate(),
+      restart: new Gate(),
     };
 
-    // Gerçek senaryo: başka bir işçi tarayıcıyı yeniden başlatmaya başlamış,
-    // context bu işçinin altından çekilmiş. Hata bu satırın suçu değil.
-    let ilkCagri = true;
-    const orijinalYeniSohbet = sekmeler[0].yeniSohbetAc;
-    sekmeler[0].yeniSohbetAc = async () => {
-      if (ilkCagri) {
-        ilkCagri = false;
-        kapilar.yenidenBaslatma.kapat();
-        setTimeout(() => kapilar.yenidenBaslatma.ac(), 5);
-        throw new Error('sekme 0 hazır değil; önce sekmeleriHazirla() çağrılmalı');
+    // Real scenario: another worker started restarting the browser and the
+    // context was pulled out from under this one. Not this row's fault.
+    let firstCall = true;
+    const originalNewChat = tabs[0].openNewChat;
+    tabs[0].openNewChat = async () => {
+      if (firstCall) {
+        firstCall = false;
+        gates.restart.close();
+        setTimeout(() => gates.restart.open(), 5);
+        throw new Error('sekme 0 hazır değil; önce prepareTabs() çağrılmalı');
       }
-      await orijinalYeniSohbet();
+      await originalNewChat();
     };
 
-    const b = bagimliliklar(sekmeler, yenidenBaslat, { kapilar, config: { ...CONFIG, tekrarDenemeSayisi: 1 } });
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
+    const d = deps(tabs, restart, { gates, config: { ...CONFIG, tekrarDenemeSayisi: 1 } });
+    const summary = await processAllRows(d, [ROW]);
 
-    // tekrarDenemeSayisi=1: hak yakılsaydı satır tek denemede başarısız olurdu.
-    expect(ozet).toEqual({ basarili: 1, atlanan: 0, basarisiz: 0 });
-    // İkinci bir yeniden başlatma da tetiklenmemeli — süreni beklemek yeter.
-    expect(cagrilar).not.toContain('yenidenBaslat');
+    // tekrarDenemeSayisi=1: had the attempt been burned, the row would fail in one try.
+    expect(summary).toEqual({ succeeded: 1, skipped: 0, failed: 0 });
+    // A second restart must not be triggered either — waiting it out is enough.
+    expect(calls).not.toContain('restart');
   });
 
-  it('durdurulunca kalan satırları işlemez', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler();
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    b.kontrolcu.abort();
-    const ozet = await tumSatirlariIsle(b, [SATIR, { metin: 'plajda', dosyaAdi: 'plaj' }]);
-    expect(ozet).toEqual({ basarili: 0, atlanan: 0, basarisiz: 0 });
-    expect(cagrilar).not.toContain('uret');
+  it('processes no remaining rows once stopped', async () => {
+    const { tabs, calls, restart } = fakeTabs();
+    const d = deps(tabs, restart);
+    d.controller.abort();
+    const summary = await processAllRows(d, [ROW, { metin: 'plajda', dosyaAdi: 'plaj' }]);
+    expect(summary).toEqual({ succeeded: 0, skipped: 0, failed: 0 });
+    expect(calls).not.toContain('generate');
   });
 
-  it('ilk satırdan sonra durdurulunca ikinciyi işlemez', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    const b = bagimliliklar(sekmeler, yenidenBaslat, {
-      satirBitti: () => {},
+  it('does not process the second row when stopped after the first', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const d = deps(tabs, restart, {
+      onRowFinished: () => {},
     });
-    const orijinalUyu = b.uyu;
-    b.uyu = async (ms, sebep) => {
-      b.kontrolcu.abort();
-      await orijinalUyu(ms, sebep);
+    const originalSleep = d.sleep;
+    d.sleep = async (ms, reason) => {
+      d.controller.abort();
+      await originalSleep(ms, reason);
     };
-    const ozet = await tumSatirlariIsle(b, [SATIR, { metin: 'plajda', dosyaAdi: 'plaj' }]);
-    expect(ozet.basarili).toBe(1);
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(1);
+    const summary = await processAllRows(d, [ROW, { metin: 'plajda', dosyaAdi: 'plaj' }]);
+    expect(summary.succeeded).toBe(1);
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(1);
   });
 
-  it('duraklatılmışken satır başlatmaz, devam edince sürer', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    const kapi = new Kapi();
-    const kontrolcu = new AbortController();
-    const b = bagimliliklar(sekmeler, yenidenBaslat, { kontrol: { signal: kontrolcu.signal, kapi } });
-    kapi.kapat();
+  it('starts no row while paused, continues on resume', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const gate = new Gate();
+    const controller = new AbortController();
+    const d = deps(tabs, restart, { control: { signal: controller.signal, gate } });
+    gate.close();
 
-    let bitti = false;
-    const calisma = tumSatirlariIsle(b, [SATIR]).then(() => {
-      bitti = true;
+    let finished = false;
+    const run = processAllRows(d, [ROW]).then(() => {
+      finished = true;
     });
 
     await Promise.resolve();
-    expect(cagrilar).not.toContain('uret');
-    expect(bitti).toBe(false);
+    expect(calls).not.toContain('generate');
+    expect(finished).toBe(false);
 
-    kapi.ac();
-    await calisma;
-    expect(cagrilar).toContain('uret');
+    gate.open();
+    await run;
+    expect(calls).toContain('generate');
   });
 
-  it('satır başladı ve bitti olaylarını sırayla yayınlar', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    await tumSatirlariIsle(b, [SATIR]);
-    expect(b.olaylar).toEqual(['basladi:1:kedi_kar', 'bitti:1:basarili']);
+  it('emits the row started and finished events in order', async () => {
+    const { tabs, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const d = deps(tabs, restart);
+    await processAllRows(d, [ROW]);
+    expect(d.events).toEqual(['started:1:kedi_kar', 'finished:1:succeeded']);
   });
 
-  it('atlanan satır için atlandı olayı yayınlar', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler();
-    const b = bagimliliklar(sekmeler, yenidenBaslat, { tamamlandiMi: () => true });
-    await tumSatirlariIsle(b, [SATIR]);
-    expect(b.olaylar).toEqual(['bitti:1:atlandi']);
+  it('emits a skipped event for a skipped row', async () => {
+    const { tabs, restart } = fakeTabs();
+    const d = deps(tabs, restart, { isCompleted: () => true });
+    await processAllRows(d, [ROW]);
+    expect(d.events).toEqual(['finished:1:skipped']);
   });
 
-  it('satır arası beklemeyi satirArasi sebebiyle yapar', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
-    const b = bagimliliklar(sekmeler, yenidenBaslat, { config: { ...CONFIG, satirArasiBekleme: [2, 2] } });
-    await tumSatirlariIsle(b, [SATIR]);
-    expect(b.beklemeler).toContainEqual({ ms: 2000, sebep: 'satirArasi' });
+  it('does the between-rows wait with the betweenRows reason', async () => {
+    const { tabs, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const d = deps(tabs, restart, { config: { ...CONFIG, satirArasiBekleme: [2, 2] } });
+    await processAllRows(d, [ROW]);
+    expect(d.sleeps).toContainEqual({ ms: 2000, reason: 'betweenRows' });
   });
-  it('geçici hata gelince kısa bekleyip tekrar dener, sonunda başarılı olur', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [{ tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' }, { tip: 'gorsel' }],
+  it('on a transient error waits briefly, retries and eventually succeeds', async () => {
+    const { tabs, calls, restart } = fakeTabs({
+      results: [{ type: 'transientError', message: 'Bir şeyler ters gitti.' }, { type: 'image' }],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet.basarili).toBe(1);
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(2);
-    expect(b.beklemeler.some((x) => x.sebep === 'geciciHata')).toBe(true);
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary.succeeded).toBe(1);
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(2);
+    expect(d.sleeps.some((x) => x.reason === 'transientError')).toBe(true);
   });
 
-  it('geçici hata deneme hakkı yakar; sürekli gelirse başarısız yazar', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [
-        { tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' },
-        { tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' },
-        { tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' },
+  it('a transient error burns a retry attempt; persistent ones record a failure', async () => {
+    const { tabs, calls, restart } = fakeTabs({
+      results: [
+        { type: 'transientError', message: 'Bir şeyler ters gitti.' },
+        { type: 'transientError', message: 'Bir şeyler ters gitti.' },
+        { type: 'transientError', message: 'Bir şeyler ters gitti.' },
       ],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
-    expect(ozet.basarisiz).toBe(1);
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(3);
-    expect(b.basarisizlar[0]).toContain('geçici hata');
+    const d = deps(tabs, restart);
+    const summary = await processAllRows(d, [ROW]);
+    expect(summary.failed).toBe(1);
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(3);
+    expect(d.failures[0]).toContain('geçici hata');
   });
 
-  it('geçici hatada rate limit beklemesi KADAR uzun beklemez', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({
-      sonuclar: [{ tip: 'geciciHata', mesaj: 'Bir şeyler ters gitti.' }, { tip: 'gorsel' }],
+  it('never waits as long as a rate-limit sleep on a transient error', async () => {
+    const { tabs, restart } = fakeTabs({
+      results: [{ type: 'transientError', message: 'Bir şeyler ters gitti.' }, { type: 'image' }],
     });
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    await tumSatirlariIsle(b, [SATIR]);
-    const geciciBekleme = b.beklemeler.find((x) => x.sebep === 'geciciHata');
-    expect(geciciBekleme!.ms).toBeLessThan(60_000);
+    const d = deps(tabs, restart);
+    await processAllRows(d, [ROW]);
+    const transientSleep = d.sleeps.find((x) => x.reason === 'transientError');
+    expect(transientSleep!.ms).toBeLessThan(60_000);
   });
 
-  it('N=3 iken üç satır AYNI ANDA uçuşta olur', async () => {
-    // Asıl paralellik iddiası: üç sekme de üretimi başlatmadan hiçbiri bitmesin.
-    let uctakiler = 0;
-    let enYuksekUcus = 0;
-    const birak: Array<() => void> = [];
+  it('with N=3, three rows are in flight AT THE SAME TIME', async () => {
+    // The core parallelism claim: none finishes before all three tabs started generating.
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const release: Array<() => void> = [];
 
-    const sekmeler: UretimSekmesi[] = Array.from({ length: 3 }, () => ({
-      yeniSohbetAc: async () => {},
-      oturumAcikMi: async () => true,
-      aktifModelAdi: async () => 'GPT-5',
-      gorselUret: async () => {
-        uctakiler++;
-        enYuksekUcus = Math.max(enYuksekUcus, uctakiler);
-        await new Promise<void>((coz) => birak.push(coz));
-        uctakiler--;
-        return { tip: 'gorsel' } as const;
+    const tabs: GenerationTab[] = Array.from({ length: 3 }, () => ({
+      openNewChat: async () => {},
+      isLoggedIn: async () => true,
+      activeModelName: async () => 'GPT-5',
+      generateImage: async () => {
+        inFlight++;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise<void>((resolve) => release.push(resolve));
+        inFlight--;
+        return { type: 'image' } as const;
       },
-      sonGorseliKaydet: async () => {},
+      saveLastImage: async () => {},
     }));
 
-    const b = bagimliliklar(sekmeler, async () => {});
-    const calisma = tumSatirlariIsle(b, [
-      SATIR,
+    const d = deps(tabs, async () => {});
+    const run = processAllRows(d, [
+      ROW,
       { metin: 'plajda', dosyaAdi: 'plaj' },
       { metin: 'dağda', dosyaAdi: 'dag' },
     ]);
 
-    // Üç sekmenin de gorselUret'e girmesini bekle
-    while (birak.length < 3) await new Promise((coz) => setTimeout(coz, 0));
-    expect(enYuksekUcus).toBe(3);
+    // Wait for all three tabs to enter generateImage
+    while (release.length < 3) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(peakInFlight).toBe(3);
 
-    for (const coz of birak) coz();
-    await calisma;
+    for (const resolve of release) resolve();
+    await run;
   });
 
-  it('N=3 iken 7 satırın her birini tam bir kez işler', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({}, 3);
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const satirlar: Satir[] = Array.from({ length: 7 }, (_, i) => ({
+  it('with N=3, each of 7 rows is processed exactly once', async () => {
+    const { tabs, calls, restart } = fakeTabs({}, 3);
+    const d = deps(tabs, restart);
+    const rows: Row[] = Array.from({ length: 7 }, (_, i) => ({
       metin: `varyasyon ${i}`,
       dosyaAdi: `dosya_${i}`,
     }));
 
-    const ozet = await tumSatirlariIsle(b, satirlar);
+    const summary = await processAllRows(d, rows);
 
-    expect(ozet).toEqual({ basarili: 7, atlanan: 0, basarisiz: 0 });
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(7);
-    const kaydedilen = cagrilar.filter((c) => c.startsWith('kaydet:'));
-    expect(new Set(kaydedilen).size).toBe(7);
+    expect(summary).toEqual({ succeeded: 7, skipped: 0, failed: 0 });
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(7);
+    const saved = calls.filter((c) => c.startsWith('save:'));
+    expect(new Set(saved).size).toBe(7);
   });
 
-  it('N=3 iken her satır için tam bir başladı ve bir bitti olayı yayınlar', async () => {
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({}, 3);
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
-    const satirlar: Satir[] = Array.from({ length: 6 }, (_, i) => ({
+  it('with N=3, emits exactly one started and one finished event per row', async () => {
+    const { tabs, restart } = fakeTabs({}, 3);
+    const d = deps(tabs, restart);
+    const rows: Row[] = Array.from({ length: 6 }, (_, i) => ({
       metin: `varyasyon ${i}`,
       dosyaAdi: `dosya_${i}`,
     }));
 
-    await tumSatirlariIsle(b, satirlar);
+    await processAllRows(d, rows);
 
-    for (let sira = 1; sira <= 6; sira++) {
-      expect(b.olaylar.filter((o) => o.startsWith(`basladi:${sira}:`))).toHaveLength(1);
-      expect(b.olaylar.filter((o) => o.startsWith(`bitti:${sira}:`))).toHaveLength(1);
+    for (let row = 1; row <= 6; row++) {
+      expect(d.events.filter((e) => e.startsWith(`started:${row}:`))).toHaveLength(1);
+      expect(d.events.filter((e) => e.startsWith(`finished:${row}:`))).toHaveLength(1);
     }
   });
 
-  it('satır sayısı sekme sayısından azsa fazla işçi boşta çıkar', async () => {
-    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({}, 4);
-    const b = bagimliliklar(sekmeler, yenidenBaslat);
+  it('extra workers retire idle when there are fewer rows than tabs', async () => {
+    const { tabs, calls, restart } = fakeTabs({}, 4);
+    const d = deps(tabs, restart);
 
-    const ozet = await tumSatirlariIsle(b, [SATIR]);
+    const summary = await processAllRows(d, [ROW]);
 
-    expect(ozet.basarili).toBe(1);
-    expect(cagrilar.filter((c) => c === 'uret')).toHaveLength(1);
+    expect(summary.succeeded).toBe(1);
+    expect(calls.filter((c) => c === 'generate')).toHaveLength(1);
   });
 
-  it('işçi i, ilk satırından önce i × satırArası kadar baslangic uykusu yapar', async () => {
-    // min = maks: rastgeleSureMs deterministik olsun
-    const { sekmeler, yenidenBaslat } = sahteSekmeler({}, 3);
-    const b = bagimliliklar(sekmeler, yenidenBaslat, {
+  it('worker i does an i × between-rows startup sleep before its first row', async () => {
+    // min = max: keeps randomDurationMs deterministic
+    const { tabs, restart } = fakeTabs({}, 3);
+    const d = deps(tabs, restart, {
       config: { ...CONFIG, satirArasiBekleme: [10, 10] },
     });
 
-    await tumSatirlariIsle(b, [
-      SATIR,
+    await processAllRows(d, [
+      ROW,
       { metin: 'plajda', dosyaAdi: 'plaj' },
       { metin: 'dağda', dosyaAdi: 'dag' },
     ]);
 
-    const kaymalar = b.beklemeler.filter((x) => x.sebep === 'baslangic').map((x) => x.ms);
-    // İşçi 0 hiç kaymaz (0 ms uyku yapılmaz), işçi 1 ve 2 kayar
-    expect(kaymalar.sort((a, c) => a - c)).toEqual([10_000, 20_000]);
+    const staggers = d.sleeps.filter((x) => x.reason === 'startup').map((x) => x.ms);
+    // Worker 0 never staggers (no 0 ms sleep is made), workers 1 and 2 do
+    expect(staggers.sort((a, c) => a - c)).toEqual([10_000, 20_000]);
   });
 
-  for (const ad of ['limit', 'kullanici', 'yenidenBaslatma'] as const) {
-    it(`${ad} kapısı kapalıyken yeni satır çekmez, açılınca sürer`, async () => {
-      const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({}, 1);
-      const kapilar: IsKapilari = {
-        limit: new Kapi(),
-        kullanici: new Kapi(),
-        yenidenBaslatma: new Kapi(),
+  for (const name of ['limit', 'user', 'restart'] as const) {
+    it(`pulls no new row while the ${name} gate is closed, continues once opened`, async () => {
+      const { tabs, calls, restart } = fakeTabs({}, 1);
+      const gates: JobGates = {
+        limit: new Gate(),
+        user: new Gate(),
+        restart: new Gate(),
       };
-      const b = bagimliliklar(sekmeler, yenidenBaslat, { kapilar });
-      kapilar[ad].kapat();
+      const d = deps(tabs, restart, { gates });
+      gates[name].close();
 
-      let bitti = false;
-      const calisma = tumSatirlariIsle(b, [SATIR]).then(() => {
-        bitti = true;
+      let finished = false;
+      const run = processAllRows(d, [ROW]).then(() => {
+        finished = true;
       });
 
-      // Gerçek makrotask beklemesi şart: `await Promise.resolve()` yalnızca tek
-      // microtask ilerletir, worker ise `uret`e ulaşana kadar birkaç tick geçirir
-      // — kapı olmasa bile test o anda henüz 'uret' görmezdi (sahte yeşil).
-      await new Promise((coz) => setTimeout(coz, 5));
-      expect(cagrilar).not.toContain('uret');
-      expect(bitti).toBe(false);
+      // A real macrotask wait is required: `await Promise.resolve()` advances
+      // only one microtask, while the worker crosses several ticks before
+      // reaching `generate` — even without the gate the test would not see
+      // 'generate' yet at that point (false green).
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(calls).not.toContain('generate');
+      expect(finished).toBe(false);
 
-      kapilar[ad].ac();
-      await calisma;
-      expect(cagrilar).toContain('uret');
+      gates[name].open();
+      await run;
+      expect(calls).toContain('generate');
     });
   }
 });

@@ -1,9 +1,9 @@
-export interface RateLimitBilgisi {
-  limitli: boolean;
-  beklemeDk?: number;
+export interface RateLimitInfo {
+  limited: boolean;
+  waitMinutes?: number;
 }
 
-const LIMIT_KALIPLARI = [
+const LIMIT_PATTERNS = [
   /you('|’)ve reached (your|our|the)?\s*.*limit/i,
   /you('|’)ve hit (your|the)?\s*.*limit/i,
   /image generation limit/i,
@@ -13,16 +13,16 @@ const LIMIT_KALIPLARI = [
   /sonra tekrar dene/i,
 ];
 
-export function rateLimitAlgila(metin: string): RateLimitBilgisi {
-  if (!LIMIT_KALIPLARI.some((kalip) => kalip.test(metin))) {
-    return { limitli: false };
+export function detectRateLimit(text: string): RateLimitInfo {
+  if (!LIMIT_PATTERNS.some((pattern) => pattern.test(text))) {
+    return { limited: false };
   }
-  return { limitli: true, beklemeDk: beklemeSuresiAyikla(metin) };
+  return { limited: true, waitMinutes: extractWaitMinutes(text) };
 }
 
-export function beklemeSuresiAyikla(metin: string): number | undefined {
-  const saat = metin.match(/(\d+)\s*(hours?|saat)/i);
-  const dakika = metin.match(/(\d+)\s*(minutes?|mins?\b|dakika|dk\b)/i);
-  if (!saat && !dakika) return undefined;
-  return (saat ? parseInt(saat[1], 10) * 60 : 0) + (dakika ? parseInt(dakika[1], 10) : 0);
+export function extractWaitMinutes(text: string): number | undefined {
+  const hours = text.match(/(\d+)\s*(hours?|saat)/i);
+  const minutes = text.match(/(\d+)\s*(minutes?|mins?\b|dakika|dk\b)/i);
+  if (!hours && !minutes) return undefined;
+  return (hours ? parseInt(hours[1], 10) * 60 : 0) + (minutes ? parseInt(minutes[1], 10) : 0);
 }

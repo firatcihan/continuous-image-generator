@@ -1,23 +1,24 @@
 import { appendFileSync } from 'node:fs';
 
 export class Logger {
-  constructor(private dosyaYolu: string) {}
+  constructor(private filePath: string) {}
 
-  bilgi(mesaj: string): void {
-    this.yaz('BILGI', mesaj);
+  // Level tags stay Turkish: they are part of the calisma.log format users read.
+  info(message: string): void {
+    this.write('BILGI', message);
   }
 
-  uyari(mesaj: string): void {
-    this.yaz('UYARI', mesaj);
+  warn(message: string): void {
+    this.write('UYARI', message);
   }
 
-  hata(mesaj: string): void {
-    this.yaz('HATA', mesaj);
+  error(message: string): void {
+    this.write('HATA', message);
   }
 
-  private yaz(seviye: string, mesaj: string): void {
-    const satir = `[${new Date().toISOString()}] ${seviye} ${mesaj}`;
-    console.log(satir);
-    appendFileSync(this.dosyaYolu, satir + '\n', 'utf-8');
+  private write(level: string, message: string): void {
+    const line = `[${new Date().toISOString()}] ${level} ${message}`;
+    console.log(line);
+    appendFileSync(this.filePath, line + '\n', 'utf-8');
   }
 }
