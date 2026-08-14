@@ -33,7 +33,7 @@ async function main(): Promise<void> {
    */
   const tarayiciAc = async (): Promise<void> => {
     if (tarayici) return;
-    const yeni = new ChatgptTarayicisi(profil);
+    const yeni = new ChatgptTarayicisi(profil, (mesaj) => logger.bilgi(mesaj));
     await yeni.baslat(); // başarısız olursa tarayici null kalır, tekrar denenebilir
     tarayici = yeni;
     logger.bilgi('tarayıcı açıldı; ChatGPT girişi kullanıcıya bırakıldı');

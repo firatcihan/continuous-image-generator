@@ -1,10 +1,24 @@
 import { writeFileSync } from 'node:fs';
-import { chromium, type BrowserContext, type Page } from 'playwright';
+import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 import { uyu } from './bekleme.js';
 import { geciciHataAlgila } from './geciciHata.js';
 import { rateLimitAlgila } from './rateLimit.js';
 import { CHATGPT_URL, SECICILER } from './seciciler.js';
 import type { GorselSonucu, UretimSekmesi, UretimTarayicisi } from './tipler.js';
+
+/** Engel kutusunu kapatan buton — arayüz diline göre "Anladım" ya da "Got it". */
+const ENGEL_KUTUSU_BUTONU = /anladım|anladim|got it|tamam/i;
+
+/**
+ * ChatGPT'nin "yeni sohbet" kısayolu.
+ *
+ * Seçici yerine kısayol: ChatGPT'nin kenar çubuğu düzeni ve testid'leri sık
+ * değişiyor, kısayol değişmiyor. Tutmazsa zaten tam gezinmeye düşülüyor.
+ */
+const YENI_SOHBET_KISAYOLU = process.platform === 'darwin' ? 'Meta+Shift+O' : 'Control+Shift+O';
+
+/** Uygulama içi yeni sohbetin açıldığının doğrulanması için üst sınır. */
+const YENI_SOHBET_DOGRULAMA_MS = 5_000;
 
 const RED_KALIPLARI = [
   /can('|’)?t (create|generate|help with) (that|this)/i,
@@ -21,7 +35,11 @@ export class ChatgptTarayicisi implements UretimTarayicisi {
   /** yenidenBaslat() aynı sayıda sekmeyi geri kurabilsin diye saklanır. */
   private sekmeSayisi = 1;
 
-  constructor(private profilYolu: string) {}
+  constructor(
+    private profilYolu: string,
+    /** Sekmelerin kullandığı kayıt kancası; verilmezse sessiz çalışır. */
+    readonly bilgiYaz: (mesaj: string) => void = () => {},
+  ) {}
 
   async baslat(): Promise<void> {
     this.context = await chromium.launchPersistentContext(this.profilYolu, {
@@ -90,9 +108,91 @@ export class ChatgptSekmesi implements UretimSekmesi {
   ) {}
 
   async yeniSohbetAc(): Promise<void> {
+    // Satır başına TAM SAYFA gezinme, "Çok fazla istek" kutusunu tetikleyen
+    // şeyin ta kendisi: her yükleme sohbet geçmişini yeniden çekiyor ve 4 sekme
+    // × 30 satır bunu dakikalar içinde onlarca kez yapıyor. Uygulama içi yeni
+    // sohbet aynı sonucu geçmişi tazelemeden veriyor.
+    if (await this.uygulamaIciYeniSohbet()) return;
+
     const sayfa = this.sayfa();
     await sayfa.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
+    // Kutu en çok burada çıkar. Prompt kutusunu beklemeden önce yoldan çekiliyor.
+    await this.engelKutusunuKapat();
     await sayfa.waitForSelector(SECICILER.promptKutusu, { timeout: 30_000 });
+  }
+
+  /**
+   * Kısayolla yeni sohbet açmayı dener.
+   *
+   * Başarı ölçütü SEÇİCİ DEĞİL DAVRANIŞ: sohbet gerçekten boşaldı ve prompt
+   * kutusu hazır mı? Kısayol bir gün çalışmazsa bu doğrulama tutmaz, `false`
+   * döner ve çağıran eski tam gezinme yoluna düşer — sessiz bozulma olmaz.
+   */
+  private async uygulamaIciYeniSohbet(): Promise<boolean> {
+    const sayfa = this.sayfa();
+    if (!sayfa.url().startsWith(CHATGPT_URL)) return false; // henüz sitede değiliz
+
+    await this.engelKutusunuKapat();
+    const kutu = sayfa.locator(SECICILER.promptKutusu).first();
+    if (!(await kutu.isVisible().catch(() => false))) return false;
+
+    await sayfa.keyboard.press(YENI_SOHBET_KISAYOLU).catch(() => {});
+
+    const bitis = Date.now() + YENI_SOHBET_DOGRULAMA_MS;
+    for (;;) {
+      const bosaldi = (await sayfa.locator(SECICILER.sohbetTuru).count().catch(() => 1)) === 0;
+      const hazir = await kutu.isVisible().catch(() => false);
+      if (bosaldi && hazir) return true;
+      if (Date.now() >= bitis) break;
+      await uyu(250);
+    }
+
+    this.ana.bilgiYaz('uygulama içi yeni sohbet tutmadı; tam sayfa gezinmeye düşülüyor');
+    return false;
+  }
+
+  /**
+   * "Çok fazla istek" kutusu açıksa "Anladım"a basıp kapatır.
+   * Açık değilse hiçbir şey yapmaz. Dönüş: kutu gerçekten kapatıldı mı?
+   *
+   * Hiçbir adımı hata fırlatmıyor — bu bir kurtarma yolu, kendisi yeni bir
+   * başarısızlık kaynağı olmamalı.
+   */
+  async engelKutusunuKapat(): Promise<boolean> {
+    const kutu = this.sayfa().locator(SECICILER.engelKutusu).first();
+    if (!(await kutu.isVisible().catch(() => false))) return false;
+
+    const buton = kutu.getByRole('button', { name: ENGEL_KUTUSU_BUTONU }).first();
+    await buton.click({ timeout: 5_000 }).catch(() => {});
+    const kapandi = await kutu
+      .waitFor({ state: 'hidden', timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    this.ana.bilgiYaz(
+      kapandi
+        ? '"Çok fazla istek" kutusu kapatıldı; üretime devam ediliyor'
+        : '"Çok fazla istek" kutusu kapatılamadı; tıklama engelli kalabilir',
+    );
+    return kapandi;
+  }
+
+  /**
+   * Engel kutusu araya girse bile tıklar.
+   *
+   * Kapatma ile tıklama arasında her zaman bir yarış penceresi var: kutu tam o
+   * anda açılabilir. O yüzden tıklama engellenirse kutu bir kez daha kapatılıp
+   * tekrar denenir. Ortada kutu yoksa asıl hata olduğu gibi yukarı gider —
+   * gerçek arıza yutulmasın.
+   */
+  private async engelsizTikla(hedef: Locator): Promise<void> {
+    await this.engelKutusunuKapat();
+    try {
+      await hedef.click({ timeout: 15_000 });
+    } catch (hata) {
+      if (!(await this.engelKutusunuKapat())) throw hata;
+      await hedef.click({ timeout: 15_000 });
+    }
   }
 
   async oturumAcikMi(): Promise<boolean> {
@@ -116,13 +216,18 @@ export class ChatgptSekmesi implements UretimSekmesi {
     const oncekiGorselSayisi = await sayfa.locator(SECICILER.sohbetGorseli).count();
 
     const kutu = sayfa.locator(SECICILER.promptKutusu);
-    await kutu.click();
+    await this.engelsizTikla(kutu);
     await kutu.fill(prompt);
     await sayfa.keyboard.press('Enter');
 
     const bitis = Date.now() + zamanAsimiSn * 1000;
     while (Date.now() < bitis) {
       await uyu(2000);
+
+      // Kutu üretim sürerken de açılabiliyor. Bir sonraki satırın tıklamasını
+      // beklemeden burada kapatılıyor: 2 sn'lik döngü "sürekli"nin pratikteki
+      // karşılığı.
+      await this.engelKutusunuKapat();
 
       const uyarilar = await sayfa
         .locator(SECICILER.uyariKutusu)

@@ -122,6 +122,8 @@ async function satiriIsle(
 ): Promise<SatirSonucu> {
   const prompt = promptOlustur(b.config.basePrompt, satir.metin);
   let deneme = 0;
+  /** Başkasının yeniden başlatması yüzünden kaç kez beklendi — livelock freni. */
+  let yenidenBaslatmaBeklemesi = 0;
 
   let sonSebep = 'bilinmiyor';
 
@@ -193,6 +195,24 @@ async function satiriIsle(
         }
       }
     } catch (hata) {
+      // Hata BAŞKA bir işçinin başlattığı yeniden başlatmadan geliyorsa
+      // ("sekme N hazır değil", "Target closed") bu satırın suçu değil: context
+      // altından çekildi. Deneme hakkı yakılmaz, yeniden başlatma bitince aynı
+      // satır tazelenmiş sekmeyle denenir. Sayaç patolojik döngüye karşı fren:
+      // yeniden başlatmalar peş peşe gelirse satır sonsuza kadar dönmesin.
+      if (!b.kapilar.yenidenBaslatma.acik() && yenidenBaslatmaBeklemesi < 5) {
+        yenidenBaslatmaBeklemesi++;
+        b.logger.uyari(
+          `tarayıcı yeniden başlatılıyor (başka işçi); ${satir.dosyaAdi} bekletildi` +
+            ` — deneme hakkı yakılmadı`,
+        );
+        // Kapı yalnızca BURADA bekleniyor, döngü başında değil: ilk denemesini
+        // henüz yapmamış işçi `birIsciCalistir` içinde zaten kapıdan geçti,
+        // onu bir kez daha bekletmek çökmeyi hiç görmemiş sekmeyi de dondururdu.
+        await b.kapilar.yenidenBaslatma.gec();
+        continue;
+      }
+
       deneme++;
       sonSebep = `tarayıcı hatası: ${(hata as Error).message.slice(0, 120)}`;
       b.logger.hata(
