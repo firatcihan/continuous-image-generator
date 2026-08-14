@@ -193,6 +193,37 @@ describe('tumSatirlariIsle', () => {
     expect(cagrilar).toContain('yenidenBaslat');
   });
 
+  it('başka işçi yeniden başlatırken düşen sekme deneme hakkı yakmaz', async () => {
+    const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler({ sonuclar: [{ tip: 'gorsel' }] });
+    const kapilar: IsKapilari = {
+      limit: new Kapi(),
+      kullanici: new Kapi(),
+      yenidenBaslatma: new Kapi(),
+    };
+
+    // Gerçek senaryo: başka bir işçi tarayıcıyı yeniden başlatmaya başlamış,
+    // context bu işçinin altından çekilmiş. Hata bu satırın suçu değil.
+    let ilkCagri = true;
+    const orijinalYeniSohbet = sekmeler[0].yeniSohbetAc;
+    sekmeler[0].yeniSohbetAc = async () => {
+      if (ilkCagri) {
+        ilkCagri = false;
+        kapilar.yenidenBaslatma.kapat();
+        setTimeout(() => kapilar.yenidenBaslatma.ac(), 5);
+        throw new Error('sekme 0 hazır değil; önce sekmeleriHazirla() çağrılmalı');
+      }
+      await orijinalYeniSohbet();
+    };
+
+    const b = bagimliliklar(sekmeler, yenidenBaslat, { kapilar, config: { ...CONFIG, tekrarDenemeSayisi: 1 } });
+    const ozet = await tumSatirlariIsle(b, [SATIR]);
+
+    // tekrarDenemeSayisi=1: hak yakılsaydı satır tek denemede başarısız olurdu.
+    expect(ozet).toEqual({ basarili: 1, atlanan: 0, basarisiz: 0 });
+    // İkinci bir yeniden başlatma da tetiklenmemeli — süreni beklemek yeter.
+    expect(cagrilar).not.toContain('yenidenBaslat');
+  });
+
   it('durdurulunca kalan satırları işlemez', async () => {
     const { sekmeler, cagrilar, yenidenBaslat } = sahteSekmeler();
     const b = bagimliliklar(sekmeler, yenidenBaslat);
