@@ -1,5 +1,5 @@
-import { writeFileSync } from 'node:fs';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
+import { atomicWrite } from './store/atomic.js';
 import { sleep } from './wait.js';
 import { detectTransientError } from './transientError.js';
 import { detectRateLimit } from './rateLimit.js';
@@ -30,25 +30,76 @@ const REFUSAL_PATTERNS = [
   /içerik politika/i,
 ];
 
+/** How the Chromium context is obtained. Swapped out in tests. */
+export type ContextLauncher = (profilePath: string) => Promise<BrowserContext>;
+
+const launchChromium: ContextLauncher = (profilePath) =>
+  chromium.launchPersistentContext(profilePath, {
+    headless: false,
+    viewport: null,
+    args: ['--disable-blink-features=AutomationControlled'],
+  });
+
 export class ChatgptBrowser implements GenerationBrowser {
   private context: BrowserContext | null = null;
   private pages: Page[] = [];
   /** Stored so relaunch() can rebuild the same number of tabs. */
   private tabCount = 1;
+  private closedListeners: Array<() => void> = [];
+  /** True while WE are the ones closing — see the 'close' hook in launch(). */
+  private closingOnPurpose = false;
 
   constructor(
     private profilePath: string,
     /** Log hook used by the tabs; silent when omitted. */
     readonly logInfo: (message: string) => void = () => {},
+    private launchContext: ContextLauncher = launchChromium,
   ) {}
 
+  /**
+   * Is a live Chromium context attached right now?
+   *
+   * The single source of truth for "is the browser open". Asking the handle
+   * every time rather than caching a flag elsewhere is what keeps the answer
+   * right across a `relaunch()`: crash recovery revives the SAME handle, and a
+   * cached flag would still be reading "closed" while a browser is running.
+   */
+  isAlive(): boolean {
+    return this.context !== null;
+  }
+
+  /**
+   * Notified when the Chromium window goes away WITHOUT us asking — the user
+   * closed it, or it crashed. Nothing in the process notices that on its own:
+   * the handle stays alive, so the server kept answering "browser open", the
+   * UI kept Başlat enabled, and pressing it threw deep inside a detached
+   * async job where nobody could see it.
+   */
+  onClosed(listener: () => void): void {
+    this.closedListeners.push(listener);
+  }
+
   async launch(): Promise<void> {
-    this.context = await chromium.launchPersistentContext(this.profilePath, {
-      headless: false,
-      viewport: null,
-      args: ['--disable-blink-features=AutomationControlled'],
+    // Reset before launching: a close we asked for is over, and the window
+    // about to open is one whose death IS news again (the relaunch path).
+    this.closingOnPurpose = false;
+    const context = await this.launchContext(this.profilePath);
+    this.context = context;
+
+    context.on('close', () => {
+      // A context replaced by a relaunch reports its death late; it must not
+      // detach the successor already serving in its place.
+      if (this.context !== context) return;
+      this.context = null;
+      this.pages = [];
+      // Playwright emits 'close' for a context WE closed too. Reporting that
+      // as "the user closed the browser" would make the session drop a handle
+      // mid-relaunch — killing the job that the restart was meant to save.
+      if (this.closingOnPurpose) return;
+      for (const listener of [...this.closedListeners]) listener();
     });
-    const first = this.context.pages()[0] ?? (await this.context.newPage());
+
+    const first = context.pages()[0] ?? (await context.newPage());
     await first.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
     this.pages = [first];
     // Crash recovery rebuilds the previous tab count; on first launch
@@ -68,6 +119,7 @@ export class ChatgptBrowser implements GenerationBrowser {
   }
 
   async close(): Promise<void> {
+    this.closingOnPurpose = true;
     await this.context?.close();
     this.context = null;
     this.pages = [];
@@ -286,7 +338,18 @@ export class ChatgptTab implements GenerationTab {
       if (!response.ok()) throw new Error(`görsel indirilemedi: HTTP ${response.status()}`);
       data = Buffer.from(await response.body());
     }
-    writeFileSync(targetPath, data);
+
+    // An empty body still passes `response.ok()`. Written out it becomes a
+    // 0-byte .png, and the row would count as produced. Treat it as a failure
+    // so the retry loop gets its chance.
+    if (data.length === 0) throw new Error('görsel gövdesi boş geldi');
+
+    // Atomic, not `writeFileSync`: a direct write truncates the target first
+    // and fills it incrementally, so a crash or a full disk mid-write leaves a
+    // TRUNCATED png at the final path — which `isCompleted` would count as a
+    // finished row and skip forever. Writing to a temp file and renaming means
+    // the target path only ever holds a complete image.
+    atomicWrite(targetPath, data);
   }
 
   private page(): Page {

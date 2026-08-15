@@ -33,7 +33,7 @@ beforeEach(() => {
   app = createServer({
     store,
     jobManager,
-    startJob: (project) => startedProjects.push(project.ad),
+    startJob: (project) => { startedProjects.push(project.ad); },
     openBrowser: async () => {},
     isBrowserOpen: () => true,
     token: TOKEN,
@@ -63,6 +63,60 @@ describe('GET /api/job', () => {
 });
 
 describe('POST /api/job/start', () => {
+  // The busy check reads the job manager, but the manager only turns busy well
+  // AFTER the route replied 202 — start.ts still has to create the folder,
+  // open the browser and prepare tabs. So two clicks landing together both
+  // sailed through, and the loser then blew up inside a detached async
+  // function where the only trace was calisma.log.
+  it('refuses a second start while the first is still preparing', async () => {
+    let starts = 0;
+    // Stays pending, exactly like start.ts while it prepares.
+    const preparing = new Promise<void>(() => {});
+    const busyApp = createServer({
+      store,
+      jobManager,
+      startJob: () => { starts++; return preparing; },
+      openBrowser: async () => {},
+      isBrowserOpen: () => true,
+      token: TOKEN,
+      allowedOrigin: () => ORIGIN,
+      webFolder: join(root, 'web'),
+      openFolder: () => {},
+    });
+
+    const fire = () => busyApp.inject({
+      method: 'POST', url: '/api/job/start', headers: authorized(), payload: { projectId: p.id },
+    });
+    const [first, second] = await Promise.all([fire(), fire()]);
+
+    expect([first.statusCode, second.statusCode].sort()).toEqual([202, 409]);
+    expect(starts).toBe(1);
+    await busyApp.close();
+  });
+
+  it('accepts a new start once the previous preparation settled', async () => {
+    let starts = 0;
+    const settledApp = createServer({
+      store,
+      jobManager,
+      startJob: async () => { starts++; },
+      openBrowser: async () => {},
+      isBrowserOpen: () => true,
+      token: TOKEN,
+      allowedOrigin: () => ORIGIN,
+      webFolder: join(root, 'web'),
+      openFolder: () => {},
+    });
+
+    const fire = () => settledApp.inject({
+      method: 'POST', url: '/api/job/start', headers: authorized(), payload: { projectId: p.id },
+    });
+    expect((await fire()).statusCode).toBe(202);
+    expect((await fire()).statusCode).toBe(202);
+    expect(starts).toBe(2);
+    await settledApp.close();
+  });
+
   it('reads the project and fires the startJob callback', async () => {
     const r = await app.inject({
       method: 'POST', url: '/api/job/start', headers: authorized(), payload: { projectId: p.id },

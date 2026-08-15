@@ -4,12 +4,23 @@ import { basename, dirname, join } from 'node:path';
 
 /** File write/fsync operations (optional, for test injection). */
 export interface FileOps {
-  write: (fd: number, content: string) => void;
+  write: (fd: number, content: string | Uint8Array) => void;
   sync: (fd: number) => void;
 }
 
 const defaultFileOps: FileOps = {
-  write: (fd: number, content: string) => writeSync(fd, content, 0, 'utf-8'),
+  // Everything travels as a Buffer so text and images share ONE code path, and
+  // the loop keeps going until every byte has landed: `writeSync` is allowed to
+  // write fewer bytes than asked, and ignoring that return value is exactly how
+  // a truncated file gets created — the failure this whole module exists to
+  // prevent. Multi-megabyte images make it more than theoretical.
+  write: (fd: number, content: string | Uint8Array) => {
+    const bytes = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
+    let written = 0;
+    while (written < bytes.length) {
+      written += writeSync(fd, bytes, written, bytes.length - written);
+    }
+  },
   sync: (fd: number) => fsyncSync(fd),
 };
 
@@ -22,7 +33,7 @@ const defaultFileOps: FileOps = {
  * @param content Content to write
  * @param ops Optional file operations (for tests). Default: real writeSync/fsyncSync
  */
-export function atomicWrite(path: string, content: string, ops?: FileOps): void {
+export function atomicWrite(path: string, content: string | Uint8Array, ops?: FileOps): void {
   const _ops = ops || defaultFileOps;
 
   const folder = dirname(path);

@@ -33,6 +33,47 @@ export interface JobOptions {
 
 const EMPTY_SUMMARY: RunSummary = { succeeded: 0, skipped: 0, failed: 0 };
 
+/** How many times the preflight probe may fail before the job is refused. */
+const PREFLIGHT_ATTEMPTS = 2;
+
+/**
+ * Proves the ChatGPT UI is reachable before the first row is pulled.
+ *
+ * The whole automation hangs off ChatGPT's DOM, and that DOM changes without
+ * warning. When a selector stops matching, every row spent a 30-second
+ * `waitForSelector` timeout, burned its retry budget and dragged a full browser
+ * restart along with it — a 200-row job thrashed for hours and the user's only
+ * clue was a Playwright timeout buried in calisma.log. One probe up front turns
+ * that into an immediate failure that says what to look at.
+ *
+ * `openNewChat()` is the probe rather than a bespoke check: it is the exact
+ * call every row starts with, so it fails on precisely what the rows would.
+ */
+async function preflight(tab: GenerationTab | undefined): Promise<void> {
+  if (tab === undefined) return;
+
+  // More than one attempt because the probe must separate "this UI is broken"
+  // from "one bad moment". A single tab crash or a slow first load happening to
+  // land exactly here would otherwise kill the whole job with a message
+  // blaming the selectors — the opposite of the clarity this is for.
+  let last = 'bilinmiyor';
+  for (let attempt = 0; attempt < PREFLIGHT_ATTEMPTS; attempt++) {
+    try {
+      await tab.openNewChat();
+      return;
+    } catch (error) {
+      last = (error as Error).message;
+    }
+  }
+
+  throw new Error(
+    'ChatGPT arayüzüne ulaşılamadı — sohbet kutusu açılamadı. Tarayıcıda ' +
+      'chatgpt.com açık ve giriş yapılmış olmalı. ChatGPT arayüzü değiştiyse ' +
+      'src/selectors.ts güncellenmeli. ' +
+      `(${last.slice(0, 160)})`,
+  );
+}
+
 function newGates(): JobGates {
   return { limit: new Gate(), user: new Gate(), restart: new Gate() };
 }
@@ -105,6 +146,7 @@ export class JobManager {
       // unexpectedly here (emit now swallows listener exceptions, but defense
       // in depth) the manager must not hang in 'running' forever.
       this.setStatus('running');
+      await preflight(options.tabs[0]);
 
       const summary = await processAllRows(
         {
@@ -162,6 +204,27 @@ export class JobManager {
       this.emit({ type: 'error', message });
       throw error;
     }
+  }
+
+  /**
+   * Reports a failure that happened OUTSIDE `start()`.
+   *
+   * `POST /api/job/start` answers 202 as soon as the request lands, and the
+   * real preparation (mkdir on the output folder, opening the browser,
+   * preparing tabs) runs detached afterwards. A throw there used to reach only
+   * calisma.log: the manager stayed 'idle', no event went out, and the user who
+   * pressed Başlat saw nothing at all happen. This puts that failure back on
+   * the same channel every other job event uses.
+   *
+   * A busy job is left untouched: two start requests can slip past the busy
+   * check together, and the loser's failure must not knock the job the winner
+   * really started out of 'running'.
+   */
+  fail(message: string, projectId?: string): void {
+    if (this.isRunning()) return;
+    if (projectId !== undefined) this.projectId = projectId;
+    this.setStatus('error');
+    this.emit({ type: 'error', message });
   }
 
   pause(): void {

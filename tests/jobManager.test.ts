@@ -376,6 +376,131 @@ describe('JobManager', () => {
   });
 });
 
+// The whole automation hangs off ChatGPT's DOM. When a selector stops
+// matching — the UI shipped a change — every row spent a 30 s waitForSelector
+// timeout, burned its retries and dragged a full browser restart along, so a
+// 200-row job thrashed for hours before reporting anything useful. One probe
+// before the first row turns that into an immediate, readable failure.
+describe('preflight', () => {
+  it('fails before any row when the chat cannot be opened', async () => {
+    const m = new JobManager();
+    const events: JobEvent[] = [];
+    m.listen((e) => events.push(e));
+    let restarts = 0;
+    let generated = 0;
+    const broken: GenerationTab = {
+      ...fakeTab(),
+      openNewChat: async () => {
+        throw new Error('Timeout 30000ms exceeded waiting for #prompt-textarea');
+      },
+      generateImage: async () => { generated++; return { type: 'image' }; },
+    };
+
+    await expect(m.start(options({
+      tabs: [broken],
+      restartBrowser: async () => { restarts++; },
+    }))).rejects.toThrow(/ChatGPT arayüzüne ulaşılamadı/);
+
+    expect(m.info().status).toBe('error');
+    expect(generated).toBe(0);
+    expect(restarts).toBe(0);
+    expect(events.some((e) => e.type === 'rowStarted')).toBe(false);
+    expect(events.some((e) => e.type === 'error')).toBe(true);
+  });
+
+  it('keeps the original failure in the message so the cause stays visible', async () => {
+    const m = new JobManager();
+    const broken: GenerationTab = {
+      ...fakeTab(),
+      openNewChat: async () => { throw new Error('net::ERR_INTERNET_DISCONNECTED'); },
+    };
+
+    await expect(m.start(options({ tabs: [broken] })))
+      .rejects.toThrow(/ERR_INTERNET_DISCONNECTED/);
+  });
+
+  it('runs the job normally when the chat opens', async () => {
+    const m = new JobManager();
+    const summary = await m.start(options({ rows: [ROWS[0]] }));
+    expect(summary.succeeded).toBe(1);
+    expect(m.info().status).toBe('finished');
+  });
+
+  // The probe has to tell "this UI is broken" apart from "one bad moment". A
+  // single crash or a slow first load landing exactly here must not kill the
+  // job with a message blaming the selectors.
+  it('shrugs off a single hiccup and runs the job', async () => {
+    const m = new JobManager();
+    let calls = 0;
+    const flaky: GenerationTab = {
+      ...fakeTab(),
+      openNewChat: async () => {
+        calls++;
+        if (calls === 1) throw new Error('tarayıcı çöktü');
+      },
+    };
+
+    const summary = await m.start(options({ rows: [ROWS[0]], tabs: [flaky] }));
+
+    expect(summary.succeeded).toBe(1);
+    expect(m.info().status).toBe('finished');
+  });
+});
+
+// `POST /api/job/start` answers 202 the moment the request arrives, then the
+// real work (mkdir on the output folder, opening the browser, preparing tabs)
+// runs detached in start.ts. Anything thrown there used to reach only
+// calisma.log: the manager stayed 'idle', no event went out, and the user who
+// pressed Başlat saw absolutely nothing happen. `fail()` is how that detached
+// failure gets back onto the screen.
+describe('fail', () => {
+  it('moves to the error status and emits the message', () => {
+    const m = new JobManager();
+    const events: JobEvent[] = [];
+    m.listen((e) => events.push(e));
+
+    m.fail('çıktı klasörü oluşturulamadı');
+
+    expect(m.info().status).toBe('error');
+    expect(events).toContainEqual({ type: 'error', message: 'çıktı klasörü oluşturulamadı' });
+  });
+
+  it('reports the project the failure belongs to', () => {
+    const m = new JobManager();
+    const statuses: Array<{ status: JobStatus; projectId: string | null }> = [];
+    m.listen((e) => {
+      if (e.type === 'status') statuses.push({ status: e.status, projectId: e.projectId });
+    });
+
+    m.fail('tarayıcı açılamadı', 'proje-7');
+
+    expect(m.info().projectId).toBe('proje-7');
+    expect(statuses).toContainEqual({ status: 'error', projectId: 'proje-7' });
+  });
+
+  // Two start requests can slip past the busy check together (the route
+  // answers before the job actually starts). The second one's failure must not
+  // knock the job the FIRST one really started out of 'running'.
+  it('leaves a busy job alone', async () => {
+    const m = new JobManager();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+
+    const running = m.start(options({
+      rows: [ROWS[0]],
+      tabs: [{ ...fakeTab(), generateImage: async () => { await held; return { type: 'image' }; } }],
+    }));
+    expect(m.info().status).toBe('running');
+
+    m.fail('ikinci başlatma patladı');
+
+    expect(m.info().status).toBe('running');
+    release();
+    await running;
+    expect(m.info().status).toBe('finished');
+  });
+});
+
 describe('parallel coordination', () => {
   it('when two tabs see a rate limit at the same time only one sleep happens', async () => {
     const sleeps: number[] = [];
@@ -460,10 +585,18 @@ describe('parallel coordination', () => {
     let bothCrashed!: () => void;
     const overlap = new Promise<void>((resolve) => (bothCrashed = resolve));
 
-    const tabs = [0, 1].map(() => {
+    const tabs = [0, 1].map((index) => {
       const t = fakeTab();
+      // start() probes tabs[0] before any row is pulled; that call must not
+      // eat this tab's scripted crash, or only ONE tab would crash during the
+      // run and the test would pass without testing the overlap at all.
+      let preflightPending = index === 0;
       let firstCall = true;
       t.openNewChat = async () => {
+        if (preflightPending) {
+          preflightPending = false;
+          return;
+        }
         if (!firstCall) return;
         firstCall = false;
         crashCount++;
