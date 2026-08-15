@@ -149,6 +149,28 @@ describe('PUT /api/projects/:id', () => {
     expect(r.statusCode).toBe(400);
   });
 
+  // The name is editable from the settings dialog; a blank one must say so
+  // rather than silently fall back to the default name.
+  it('rejects a blank name with 400', async () => {
+    const p = store.create('Kedi');
+    const r = await app.inject({
+      method: 'PUT', url: `/api/projects/${p.id}`, headers: authorized(),
+      payload: { ...p, ad: '   ' },
+    });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatch(/proje adı boş olamaz/);
+    expect(store.read(p.id)?.ad).toBe('Kedi');
+  });
+
+  it('trims the new name', async () => {
+    const p = store.create('Kedi');
+    await app.inject({
+      method: 'PUT', url: `/api/projects/${p.id}`, headers: authorized(),
+      payload: { ...p, ad: '  Kedi 2  ' },
+    });
+    expect(store.read(p.id)?.ad).toBe('Kedi 2');
+  });
+
   it('rejects another project\'s output folder with 400', async () => {
     const one = store.create('Kedi');
     const two = store.create('Plaj');

@@ -4,6 +4,9 @@ import { markInvalid, scheduleSave } from './save.js';
 
 const $ = (id) => document.getElementById(id);
 
+/** Mirrors `PLACEHOLDER` in src/prompt.ts — it is part of the saved prompts. */
+const PLACEHOLDER = '{VARYASYON}';
+
 // `key` values are persisted ProjectSettings field names (Turkish, on-disk
 // schema); `label`/`hint` are user-facing UI text (Turkish by design).
 const SETTING_FIELDS = [
@@ -24,6 +27,7 @@ export function projectFromForm() {
 
   return {
     ...base,
+    ad: $('setting-ad').value.trim(),
     basePrompt: $('basePrompt').value,
     script: $('scriptArea').value,
     ciktiKlasoru: $('setting-ciktiKlasoru').value.trim(),
@@ -56,6 +60,7 @@ function validateProject(project) {
     return 'Eş zamanlı sekme 1 ile 4 arasında tam sayı olmalı';
   }
   if (project.satirlar === null) return 'Satır listesi geçersiz';
+  if (project.ad === '') return 'Proje adı boş olamaz';
   if (project.ciktiKlasoru === '') return 'Çıktı klasörü boş olamaz';
   return null;
 }
@@ -94,19 +99,63 @@ async function refreshPreview(project) {
       'Prompt içinde {VARYASYON} yok — her satır aynı görseli üretirdi';
     $('basePrompt').classList.toggle('invalid', !result.hasPlaceholder);
 
+    const segments = project.basePrompt.split(PLACEHOLDER);
     const list = $('preview');
     list.textContent = '';
-    for (const text of result.previews) {
-      const item = document.createElement('li');
-      item.textContent = text;
-      list.append(item);
+
+    // No rows yet (or none valid): the prompt itself is the preview, with the
+    // placeholders as chips — so the highlight is live while typing, before
+    // there is anything to substitute. Without a placeholder there is nothing
+    // to show; the warning line above says so already.
+    if (result.previews.length === 0) {
+      if (result.hasPlaceholder) list.append(previewLine(segments, 'VARYASYON'));
+      return;
     }
+
+    // `buildPreviews` renders the first N rows in order, so preview `index`
+    // belongs to row `index`.
+    result.previews.forEach((text, index) => {
+      const metin = project.satirlar?.[index]?.metin;
+      list.append(metin === undefined || segments.join(metin) !== text
+        ? plainLine(text)
+        : previewLine(segments, metin));
+    });
   } catch (error) {
     // The preview is purely visual; its failure must not block saving. It is
     // still logged, so if the list gets stuck stale (possibly wrong) the
     // cause is visible.
     console.error('önizleme tazelenemedi:', error);
   }
+}
+
+/**
+ * A preview line where the text sitting in place of `{VARYASYON}` is drawn as
+ * a chip: `segments` are the parts of the base prompt around the placeholder,
+ * `chipText` is what goes between them.
+ */
+function previewLine(segments, chipText) {
+  const item = document.createElement('li');
+  segments.forEach((segment, index) => {
+    if (segment !== '') item.append(segment);
+    if (index < segments.length - 1) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = chipText;
+      item.append(chip);
+    }
+  });
+  return item;
+}
+
+/**
+ * The server's own text, unchanged. It has the last word on what actually gets
+ * submitted, so a line that does not rebuild EXACTLY from the segments is
+ * written out plainly rather than shown with chips in the wrong places.
+ */
+function plainLine(text) {
+  const item = document.createElement('li');
+  item.textContent = text;
+  return item;
 }
 
 export function renderSaveIndicator() {
@@ -153,6 +202,7 @@ function renderSettings(project) {
   const wrap = $('settings');
   if (wrap.dataset.built === '1') {
     // The fields already exist; only write values — no cursor loss while typing
+    $('setting-ad').value = project.ad;
     $('setting-modelAdi').value = project.ayarlar.modelAdi;
     $('setting-ciktiKlasoru').value = project.ciktiKlasoru;
     $('setting-waitMin').value = project.ayarlar.satirArasiBekleme[0];
@@ -164,6 +214,19 @@ function renderSettings(project) {
   }
 
   wrap.textContent = '';
+
+  // Renaming does NOT move the output folder (see the note below): the two are
+  // separate fields on purpose, so the images already produced are not left
+  // behind in a folder nobody looks at any more.
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'Proje adı';
+  nameLabel.title = 'Ad değişince çıktı klasörü olduğu yerde kalır.';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.id = 'setting-ad';
+  nameInput.value = project.ad;
+  nameLabel.htmlFor = nameInput.id;
+  wrap.append(nameLabel, nameInput);
 
   // The output folder is not inside `ayarlar`, it is a root field of the
   // project — but a setting to the user. It does not change automatically

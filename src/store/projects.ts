@@ -96,7 +96,12 @@ export function validateProject(raw: unknown, outputRoot: string): Project {
     throw new Error('id geçersiz (yalnızca küçük harf, rakam ve tire)');
   }
 
-  const name = stringField(source.ad, 'Yeni proje');
+  // Trimmed, and a blank name falls back to the default — same rule as
+  // `create()`. It does NOT throw on purpose: `read()` marks a file `.bozuk`
+  // for anything validation rejects, and a hand-edited empty name would take
+  // the whole project (rows, prompt) off the screen. The blank name coming
+  // over HTTP is rejected one level up, at the PUT route.
+  const name = stringField(source.ad, 'Yeni proje').trim() || 'Yeni proje';
   const fallback = newProject(id, name, outputRoot);
 
   const outputFolder = stringField(source.ciktiKlasoru, fallback.ciktiKlasoru).trim();

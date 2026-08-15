@@ -105,7 +105,8 @@ function renderTable() {
   const table = document.createElement('table');
   table.className = 'row-table';
   const head = document.createElement('tr');
-  for (const title of ['Metin (varyasyon)', 'Dosya adı', '']) {
+  // The leading empty header belongs to the row-number column.
+  for (const title of ['', 'Metin (varyasyon)', 'Dosya adı', '']) {
     const cell = document.createElement('th');
     cell.textContent = title;
     head.append(cell);
@@ -115,9 +116,17 @@ function renderTable() {
   rows().forEach((row, index) => {
     const tr = document.createElement('tr');
 
+    // Purely visual row number. It holds no input, so the `inputs[0]`/`inputs[1]`
+    // lookups in refreshMarkers keep pointing at metin/dosyaAdi.
+    const numberCell = document.createElement('td');
+    numberCell.className = 'num';
+    numberCell.textContent = String(index + 1).padStart(2, '0');
+    tr.append(numberCell);
+
     // Field names mirror the persisted Row schema (metin/dosyaAdi) — do not rename.
     for (const field of ['metin', 'dosyaAdi']) {
       const td = document.createElement('td');
+      if (field === 'dosyaAdi') td.className = 'file';
       const input = document.createElement('input');
       input.type = 'text';
       input.value = row[field];

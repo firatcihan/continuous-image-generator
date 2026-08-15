@@ -37,9 +37,24 @@ let browserOpening = false;
  */
 let stopPending = false;
 
-export function addLog(text) {
+/**
+ * `tone` marks the line's outcome and only colours the dot ('ok' turns it
+ * green). It stays optional: every caller that has nothing to report keeps the
+ * neutral grey dot, so the colour reads as a signal instead of decoration.
+ */
+export function addLog(text, tone) {
   const line = document.createElement('div');
-  line.textContent = `${new Date().toLocaleTimeString('tr-TR')} ${text}`;
+  // Time, marker and message are separate spans so the CSS can hold the
+  // timestamps in a fixed-width column and keep the message text aligned.
+  const time = document.createElement('span');
+  time.className = 'time';
+  time.textContent = new Date().toLocaleTimeString('tr-TR');
+  const dot = document.createElement('span');
+  dot.className = tone ? `dot ${tone}` : 'dot';
+  const message = document.createElement('span');
+  message.className = 'msg';
+  message.textContent = text;
+  line.append(time, dot, message);
   $('log').prepend(line);
   while ($('log').childElementCount > 200) $('log').lastElementChild.remove();
 }
@@ -130,6 +145,16 @@ export function renderProgress() {
     }
   }
 
+  // The track is always drawn — an empty rail is what "not run yet" looks like.
+  const track = document.createElement('div');
+  track.className = 'track';
+  const fill = document.createElement('div');
+  fill.className = 'fill';
+  const ratio = thisProjectsJob && job.total > 0 ? job.done / job.total : 0;
+  fill.style.width = `${Math.round(ratio * 100)}%`;
+  track.append(fill);
+  wrap.append(track);
+
   const userNeeded = running && job.status === 'waitingUser';
   $('userCard').hidden = !userNeeded;
   $('userMessage').textContent = job.message ?? '';
@@ -147,9 +172,11 @@ function renderButtons() {
     $('btnBrowser').textContent = 'Açılıyor…';
     $('btnBrowser').disabled = true;
   } else {
-    $('btnBrowser').textContent = state.browserOpen ? '✓ Tarayıcı açık' : '1 · Tarayıcıyı aç';
+    $('btnBrowser').textContent = state.browserOpen ? 'Tarayıcı açık' : '1 · Tarayıcıyı aç';
     $('btnBrowser').disabled = state.browserOpen;
   }
+  // The ✓ moved into CSS: the pill carries a status dot that turns green here.
+  $('btnBrowser').classList.toggle('open', state.browserOpen && !browserOpening);
 
   $('btnStart').disabled = project === null || isJobBusy() || !state.browserOpen;
   $('btnStart').title = otherJobRunning
@@ -217,7 +244,7 @@ export function bindProgress() {
       await api.openBrowser();
       addLog('tarayıcı açıldı — ChatGPT\'ye giriş yapın');
     } catch (error) {
-      addLog(`tarayıcı açılamadı: ${error.message}`);
+      addLog(`tarayıcı açılamadı: ${error.message}`, 'err');
     } finally {
       browserOpening = false;
     }
@@ -229,7 +256,7 @@ export function bindProgress() {
     try {
       await api.startJob(state.activeProject.id);
     } catch (error) {
-      addLog(`başlatılamadı: ${error.message}`);
+      addLog(`başlatılamadı: ${error.message}`, 'err');
     }
   });
 
@@ -240,7 +267,7 @@ export function bindProgress() {
       await api.stopJob();
     } catch (error) {
       stopPending = false;
-      addLog(error.message);
+      addLog(error.message, 'err');
       renderProgress();
     }
   });
@@ -255,7 +282,7 @@ export function bindProgress() {
       try {
         await action();
       } catch (error) {
-        addLog(error.message);
+        addLog(error.message, 'err');
       }
     });
   }

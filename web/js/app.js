@@ -5,6 +5,7 @@ import { bindEditor, renderEditor } from './editor.js';
 import { renderGallery } from './gallery.js';
 import { bindProgress, renderProgress, refreshJobStatus, addLog } from './progress.js';
 import { bindList, renderList } from './list.js';
+import { bindGuide } from './guide.js';
 import { selectProject, renderProjects, loadProjects, openNewProjectRow } from './projects.js';
 import { bindDelete } from './delete.js';
 
@@ -40,6 +41,9 @@ async function start() {
   bindList();
   bindProgress();
   bindDelete();
+  // Before the project load: on the very first launch the guide covers the
+  // panel, so it must not flash the empty screen first.
+  bindGuide();
 
   $('btnNewProject').addEventListener('click', () => openNewProjectRow());
   $('btnSettings').addEventListener('click', () => {
@@ -54,7 +58,7 @@ async function start() {
     try {
       await api.openFolder(state.activeProject.id);
     } catch (error) {
-      addLog(`klasör açılamadı: ${error.message}`);
+      addLog(`klasör açılamadı: ${error.message}`, 'err');
     }
   });
   window.addEventListener('hashchange', () => void route());

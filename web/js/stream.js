@@ -34,6 +34,8 @@ const END_STATUSES = ['finished', 'stopped', 'error'];
 /** Turkish log labels for rowFinished results (UI text stays Turkish). */
 const RESULT_LABELS = { succeeded: 'başarılı', skipped: 'atlandı', failed: 'başarısız' };
 
+const ROW_RESULT_TONES = { succeeded: 'ok', failed: 'err' };
+
 const doneCount = (summary) => summary.succeeded + summary.skipped + summary.failed;
 
 async function handleEvent(event) {
@@ -58,11 +60,11 @@ async function handleEvent(event) {
       job.total = event.total;
       job.inFlight = [...job.inFlight, event.fileName];
       update({ job });
-      addLog(`${event.row}/${event.total} ${event.fileName} başladı`);
+      addLog(`${event.row}/${event.total} ${event.fileName} başladı`, 'start');
       return;
 
     case 'imageReady':
-      addLog(`${event.fileName} hazır`);
+      addLog(`${event.fileName} hazır`, 'ok');
       // The gallery only refreshes when that project is open on screen
       if (state.activeProject !== null && state.activeProject.id === state.job.projectId) {
         await loadGallery(state.activeProject.id);
@@ -76,7 +78,11 @@ async function handleEvent(event) {
       job.done = doneCount(event.summary);
       job.inFlight = job.inFlight.filter((name) => name !== event.fileName);
       update({ job });
-      addLog(`${event.row}. satır: ${RESULT_LABELS[event.result] ?? event.result}${event.reason ? ` (${event.reason})` : ''}`);
+      addLog(
+        `${event.row}. satır: ${RESULT_LABELS[event.result] ?? event.result}${event.reason ? ` (${event.reason})` : ''}`,
+        // 'skipped' keeps the grey dot: not a success, not a failure either
+        ROW_RESULT_TONES[event.result],
+      );
       return;
 
     case 'limitWaiting':
@@ -87,7 +93,7 @@ async function handleEvent(event) {
     // The worker is retrying the row after a transient error. Without a log
     // line the user thinks the screen froze.
     case 'transientError':
-      addLog('geçici hata — yeniden denenecek');
+      addLog('geçici hata — yeniden denenecek', 'err');
       return;
 
     case 'userNeeded':
@@ -97,7 +103,7 @@ async function handleEvent(event) {
       return;
 
     case 'error':
-      addLog(`hata: ${event.message}`);
+      addLog(`hata: ${event.message}`, 'err');
       update({ error: event.message });
       return;
 
@@ -108,6 +114,7 @@ async function handleEvent(event) {
       update({ job });
       addLog(
         `bitti — ✓ ${event.summary.succeeded}, atlanan ${event.summary.skipped}, ✗ ${event.summary.failed}`,
+        'done',
       );
       await loadProjects();
       if (state.activeProject !== null) await loadGallery(state.activeProject.id);

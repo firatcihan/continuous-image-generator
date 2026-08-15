@@ -41,6 +41,14 @@ describe('validateProject', () => {
     expect(p.ad).toBe('Yeni proje');
   });
 
+  // Not an exception: `read()` moves anything validation rejects to `.bozuk`,
+  // and a hand-edited blank name would take the project's rows and prompt off
+  // the screen with it. The blank name over HTTP is rejected by the PUT route.
+  it('trims the name and falls back to the default when it is blank', () => {
+    expect(validateProject({ id: 'a-1111', ad: '  Kedi  ' }, outputRoot).ad).toBe('Kedi');
+    expect(validateProject({ id: 'a-1111', ad: '   ' }, outputRoot).ad).toBe('Yeni proje');
+  });
+
   it('trims rows and normalizes the file name', () => {
     const p = validateProject(
       { id: 'a-1111', satirlar: [{ metin: '  karda ', dosyaAdi: 'kedi kar.png' }] },

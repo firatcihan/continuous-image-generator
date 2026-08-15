@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ChatGPT Görsel Üretici</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -23,13 +27,163 @@
   <header>
     <h1 id="projectName">—</h1>
     <button id="btnSettings" class="icon" title="Proje ayarları">⚙</button>
+    <button id="btnGuide" class="small">Rehber</button>
     <span id="saveStatus" class="muted"></span>
-    <button id="btnBrowser">1 · Tarayıcıyı aç</button>
-    <button id="btnStart" class="primary">2 · Başlat</button>
-    <button id="btnPause" disabled>Duraklat</button>
-    <button id="btnResume" disabled>Devam</button>
-    <button id="btnStop" disabled>Durdur</button>
+    <!-- The actions wrap as ONE block on a narrow window: loose in the header
+         they wrapped one by one and the segmented control was left hanging on
+         a line of its own. -->
+    <div class="header-actions">
+      <button id="btnBrowser">1 · Tarayıcıyı aç</button>
+      <button id="btnStart" class="primary">2 · Başlat</button>
+      <!-- The three job controls read as one segmented control; the wrapper draws
+           the shared border, the buttons only the seams between them. -->
+      <div class="segment">
+        <button id="btnPause" disabled>Duraklat</button>
+        <button id="btnResume" disabled>Devam</button>
+        <button id="btnStop" disabled>Durdur</button>
+      </div>
+    </div>
   </header>
+
+  <!--
+    The guide takes over the whole content area (the header included — see the
+    `#content.guide-open` rules), the project list on the left stays reachable.
+    Every mockup inside a card is plain markup: they picture the panel, they are
+    not live copies of it, so no live state ever has to be pumped in here.
+  -->
+  <main id="guideScreen" hidden>
+    <div class="guide-head">
+      <div>
+        <p class="guide-eyebrow">Başlangıç rehberi</p>
+        <h2>10 adımda ilk videonuz</h2>
+        <p class="guide-lead">Ses kaydından toplu görsel üretimine giden önerilen akış.
+          Bu sayfaya üstteki <strong>Rehber</strong> butonundan her zaman dönebilirsiniz.</p>
+      </div>
+      <button class="primary guide-close">Panele geç →</button>
+    </div>
+
+    <div class="guide-grid">
+      <article class="guide-card">
+        <div class="shot shot-projects">
+          <div class="shot-line">
+            <span class="shot-label">Projeler</span>
+            <span class="shot-plus">+</span>
+          </div>
+          <p class="shot-project active">yeni proje</p>
+          <p class="shot-project">test</p>
+        </div>
+        <p class="step"><span class="step-num">01</span>Proje oluşturun</p>
+        <p class="step-text">Sol üstteki <strong>+</strong> butonuyla yeni bir proje açın.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-audio">
+          <div class="bars">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <p class="shot-mono"><span class="shot-dot rec"></span>00:42 · kayıt</p>
+        </div>
+        <p class="step"><span class="step-num">02</span>Ses kaydını hazırlayın</p>
+        <p class="step-text">Oluşturacağınız video için ses kaydı yapın veya oluşturun.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-transcript">
+          <span class="shot-label">TurboScribe → metin</span>
+          <p class="shot-mono"><span class="stamp">(0:00)</span> Merhaba, bu videoda…</p>
+          <p class="shot-mono"><span class="stamp">(0:12)</span> İlk sahnede bir kedi…</p>
+          <p class="shot-mono"><span class="stamp">(0:27)</span> Ardından şehre geçiyoruz…</p>
+        </div>
+        <p class="step"><span class="step-num">03</span>Yazıya dökün</p>
+        <p class="step-text">Kaydı TurboScribe gibi bir araçla, zaman damgalarıyla birlikte
+          yazıya dökün.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-script">
+          <span class="shot-tabs"><span>Tablo</span><span>CSV</span><span class="on">Script</span></span>
+          <p class="shot-mono">(0:12) İlk sahnede bir kedi…<br>(0:27) Ardından şehre…</p>
+          <span class="shot-btn">Satırlara çevir</span>
+        </div>
+        <p class="step"><span class="step-num">04</span>Script'i yapıştırın</p>
+        <p class="step-text">Satırlar bölümünde <strong>Script</strong> sekmesine yapıştırıp
+          <strong>Satırlara çevir</strong>'e basın. Her zaman damgası bir satır açar: damgadan
+          önceki metin o satırın metni, damganın kendisi dosya adı olur.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-prompt">
+          <p class="shot-mono">Bir kedi, <span class="chip">VARYASYON</span>, stüdyo ışığında</p>
+          <span class="shot-btn dashed">{VARYASYON} ekle</span>
+        </div>
+        <p class="step"><span class="step-num">05</span>Base prompt'u hazırlayın</p>
+        <p class="step-text"><strong>{VARYASYON}</strong> etiketini kullanarak base prompt'unuzu
+          yazın; her satırın metni bu etiketin yerine geçer.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-preview">
+          <span class="shot-label">Önizleme</span>
+          <p class="shot-mono">Bir kedi, <span class="chip">koşarken</span>, stüdyo ışığında</p>
+          <p class="shot-mono">Bir kedi, <span class="chip">zıplarken</span>, stüdyo ışığında</p>
+        </div>
+        <p class="step"><span class="step-num">06</span>Önizlemeyi kontrol edin</p>
+        <p class="step-text">Gidecek promptu önizleme alanından kontrol edin.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-settings">
+          <p class="shot-line"><span class="shot-gear">⚙</span><strong>Proje ayarları</strong></p>
+          <p class="shot-field"><span>Çıktı klasörü</span><span class="mono">/ciktilar</span></p>
+          <p class="shot-field"><span>Satır arası bekleme</span><span class="mono">8 – 14 sn</span></p>
+        </div>
+        <p class="step"><span class="step-num">07</span>Ayarları düzenleyin</p>
+        <p class="step-text">Üstteki <strong>⚙</strong> butonuna basıp proje ayarlarınızı
+          düzenleyin.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-browser">
+          <span class="shot-btn ghost">1 · Tarayıcıyı aç</span>
+          <span class="shot-pill"><span class="shot-dot ok"></span>Tarayıcı açık</span>
+          <p class="shot-hint">ChatGPT hesabınıza giriş yapın</p>
+        </div>
+        <p class="step"><span class="step-num">08</span>Tarayıcıyı açın</p>
+        <p class="step-text"><strong>1 · Tarayıcıyı aç</strong>'a basıp ChatGPT hesabınıza giriş
+          yapın.</p>
+      </article>
+
+      <article class="guide-card">
+        <div class="shot shot-start">
+          <span class="shot-btn">2 · Başlat</span>
+          <p class="shot-mono"><span class="shot-dot ok"></span>1. satır: başarılı</p>
+          <p class="shot-mono"><span class="shot-dot ok"></span>2. satır: başarılı</p>
+          <p class="shot-mono dim"><span class="shot-dot"></span>3/30 başladı</p>
+        </div>
+        <p class="step"><span class="step-num">09</span>Başlatın</p>
+        <p class="step-text"><strong>2 · Başlat</strong>'a basın; yapılan işlemleri
+          <strong>Kayıt</strong> bölümünden izleyin.</p>
+      </article>
+
+      <article class="guide-card wide">
+        <div class="shot shot-timeline">
+          <p class="scale"><span>0:00</span><span>0:10</span><span>0:27</span><span>0:41</span></p>
+          <p class="blocks"><span>0_10</span><span>0_27</span><span>0_41</span><span class="next">0_55</span></p>
+          <p class="track"><span class="audio">🔊 ses kaydı</span></p>
+        </div>
+        <p class="step"><span class="step-num">10</span>Videoyu kurgulayın</p>
+        <p class="step-text">Dosya adları görselin biteceği zamanı gösterir. Video editörünüzde
+          her görseli, bir önceki görselin bitişinden kendi adındaki zamana kadar gösterin:
+          <strong>0_10</strong> → 0:00–0:10, <strong>0_27</strong> → 0:10–0:27. Böylece görseller
+          ses kaydıyla senkron ilerler.</p>
+      </article>
+    </div>
+
+    <div class="guide-foot">
+      <button class="primary guide-close">Rehberi kapat, panele geç →</button>
+    </div>
+  </main>
 
   <main id="emptyState" hidden>
     <section>
@@ -93,13 +247,23 @@
         <div id="progress"></div>
         <div id="userCard" hidden>
           <p class="warning-text" id="userMessage"></p>
-          <button id="btnReady" class="primary">Giriş yaptım, devam et</button>
+          <!--
+            Also `exempt`: this card is only ever visible WHILE the job runs
+            (status `waitingUser`), so without it the button would be locked
+            every single time it appears — the job could never be resumed.
+          -->
+          <button id="btnReady" class="primary exempt">Giriş yaptım, devam et</button>
         </div>
       </section>
 
       <section>
         <h2>Galeri
-          <button id="btnFolder" class="small">Klasörü aç</button>
+          <!--
+            `exempt`: opening the output folder does not change the project, so
+            the `.locked` rule must not swallow it — while a job is running is
+            exactly when the user wants to look at the images being written.
+          -->
+          <button id="btnFolder" class="small exempt">Klasörü aç</button>
         </h2>
         <div id="gallery" class="gallery"></div>
       </section>

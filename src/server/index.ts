@@ -232,6 +232,14 @@ export function createServer(d: ServerDeps): FastifyInstance {
     if (request.body === undefined || request.body === null) {
       return reply.code(400).send({ error: 'proje gövdesi gerekli' });
     }
+    // The name is editable from the settings dialog. `validateProject` falls
+    // back to the default for a blank one instead of throwing (a file on disk
+    // must not become `.bozuk` over a name) — so a blank name arriving HERE
+    // would silently rename the project. Say so instead.
+    const name = (request.body as { ad?: unknown }).ad;
+    if (typeof name === 'string' && name.trim() === '') {
+      return reply.code(400).send({ error: 'proje adı boş olamaz' });
+    }
 
     try {
       // The id in the path wins: a body's id can never overwrite another project.

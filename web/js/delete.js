@@ -70,7 +70,7 @@ async function confirm() {
       addLog(`"${removed.ad}" silindi (${result.deleted} görsel).`);
     }
   } catch (error) {
-    addLog(`silinemedi: ${error.message}`);
+    addLog(`silinemedi: ${error.message}`, 'err');
     return;
   }
 
