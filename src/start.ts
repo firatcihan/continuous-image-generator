@@ -11,6 +11,7 @@ import { generateToken } from './server/security.js';
 import { openFolder, openUrl } from './server/folder.js';
 import { ChatgptBrowser } from './browser.js';
 import { BrowserSession } from './browserSession.js';
+import { claimSingleInstance, lockFilePath, releaseSingleInstance } from './singleInstance.js';
 
 const web = fileURLToPath(new URL('../web', import.meta.url));
 
@@ -117,14 +118,37 @@ async function main(): Promise<void> {
   address = `http://127.0.0.1:${port}`;
 
   const url = `${address}/?t=${token}`;
+
+  // Claimed only once the port is known, so the message can carry a URL that
+  // actually works. A second instance would share `chrome_profil` with this
+  // one and its Chromium would die on launch — see src/singleInstance.ts.
+  const lockPath = lockFilePath(dataRoot);
+  const claim = claimSingleInstance(lockPath, { pid: process.pid, url });
+  if (!claim.claimed) {
+    await app.close();
+    console.log(
+      `\n  ChatGPT Görsel Üretici zaten çalışıyor (pid ${claim.running.pid}):\n` +
+        `  ${claim.running.url}\n\n` +
+        `  İkinci bir kopya aynı Chrome profilini kullanacağı için tarayıcı açılamaz.\n` +
+        `  O pencere kapandıysa: kill ${claim.running.pid}\n`,
+    );
+    openUrl(claim.running.url);
+    return;
+  }
+
   console.log(`\n  ChatGPT Görsel Üretici çalışıyor:\n  ${url}\n`);
   openUrl(url);
 
   const shutdown = async () => {
     await app.close();
     await session.close();
+    releaseSingleInstance(lockPath, process.pid);
     process.exit(0);
   };
+  // SIGINT/SIGTERM are the normal exits, but a crash (or SIGHUP from a closed
+  // terminal) would otherwise leave a lock behind that blocks the next start
+  // until its pid happens to be free again.
+  process.on('exit', () => releaseSingleInstance(lockPath, process.pid));
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
