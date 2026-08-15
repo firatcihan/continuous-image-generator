@@ -139,6 +139,27 @@ describe('atomicWrite', () => {
     expect(readFileSync(path, 'utf-8')).toBe('test içerik');
   });
 
+  // Images go through the same path as project JSON. Bytes must survive it
+  // untouched: a utf-8 round trip would mangle every non-textual byte.
+  it('writes binary content byte for byte', () => {
+    const path = join(root, 'x.png');
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x7f, 0x80]);
+
+    atomicWrite(path, bytes);
+
+    expect(readFileSync(path).equals(bytes)).toBe(true);
+  });
+
+  it('writes binary content larger than a single write chunk', () => {
+    const path = join(root, 'buyuk.png');
+    const bytes = Buffer.alloc(3 * 1024 * 1024);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
+
+    atomicWrite(path, bytes);
+
+    expect(readFileSync(path).equals(bytes)).toBe(true);
+  });
+
   it('temp file names are unique via UUID across concurrent writes', () => {
     const path1 = join(root, 'a.txt');
     const path2 = join(root, 'b.txt');

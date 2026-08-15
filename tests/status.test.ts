@@ -17,6 +17,16 @@ describe('isCompleted', () => {
     expect(isCompleted(folder, 'var')).toBe(true);
     expect(isCompleted(folder, 'yok')).toBe(false);
   });
+
+  // The resume rule is "the row is done when its PNG is on disk". A 0-byte
+  // file is not a produced image — it is the residue of a write cut short by
+  // a crash or a full disk. Counted as done, that row is skipped on every
+  // later run: the user keeps a broken file and never gets a retry.
+  it('returns false for a 0-byte file so a broken row is retried', () => {
+    const folder = mkdtempSync(join(tmpdir(), 'cikti-bos-'));
+    writeFileSync(join(folder, 'yarim.png'), '');
+    expect(isCompleted(folder, 'yarim')).toBe(false);
+  });
 });
 
 describe('recordFailure', () => {

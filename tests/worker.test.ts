@@ -176,6 +176,66 @@ describe('processAllRows', () => {
     expect(summary.succeeded).toBe(1);
   });
 
+  // Both checks are heuristics over ChatGPT's DOM: `isLoggedIn` reads a "Log
+  // in" button, the model check reads the switcher's label. When one of them
+  // is simply WRONG the user is trapped — they press Devam, the same card pops
+  // straight back, and the only way out is Durdur. Their repeated confirmation
+  // is better evidence than our own selector, so past a limit we stop asking
+  // and attempt generation; a genuinely dead session then fails on its own
+  // through the normal retry path, with a real error.
+  it('stops asking about the session and tries anyway after repeated confirmations', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const loggedOut = tabs.map((tab) => ({ ...tab, isLoggedIn: async () => false }));
+    const d = deps(loggedOut, restart);
+    const asked: string[] = [];
+    // Safety net: an implementation that never stops asking trips this, so the
+    // test fails on the count below instead of spinning until the timeout.
+    d.waitForUser = async (message: string) => {
+      asked.push(message);
+      if (asked.length >= 30) d.controller.abort();
+    };
+
+    await processAllRows(d, [ROW]);
+
+    expect(asked.length).toBeLessThan(30);
+    expect(calls).toContain('generate');
+  });
+
+  it('stops asking about the model and tries anyway after repeated confirmations', async () => {
+    const { tabs, calls, restart } = fakeTabs({ model: 'GPT-4o mini' });
+    const d = deps(tabs, restart, { config: { ...CONFIG, modelAdi: 'GPT-5' } });
+    const asked: string[] = [];
+    d.waitForUser = async (message: string) => {
+      asked.push(message);
+      if (asked.length >= 30) d.controller.abort();
+    };
+
+    await processAllRows(d, [ROW]);
+
+    expect(asked.length).toBeLessThan(30);
+    expect(calls).toContain('generate');
+  });
+
+  // A full disk or a permission problem is not something relaunching Chromium
+  // can fix. Treated as a browser error it cost a full browser restart PLUS
+  // the retry budget on EVERY remaining row — a clean failure turned into
+  // hours of thrashing.
+  it('does not restart the browser when saving the image fails on the file system', async () => {
+    const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
+    const diskFull = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    const failing = tabs.map((tab) => ({
+      ...tab,
+      saveLastImage: async () => { throw diskFull; },
+    }));
+    const d = deps(failing, restart);
+
+    const summary = await processAllRows(d, [ROW]);
+
+    expect(calls).not.toContain('restart');
+    expect(summary.failed).toBe(1);
+    expect(d.failures[0]).toContain('kaydedilemedi');
+  });
+
   it('restarts and retries on a browser error', async () => {
     const { tabs, calls, restart } = fakeTabs({ results: [{ type: 'image' }] });
     let firstCall = true;

@@ -10,6 +10,7 @@ import { createServer } from './server/index.js';
 import { generateToken } from './server/security.js';
 import { openFolder, openUrl } from './server/folder.js';
 import { ChatgptBrowser } from './browser.js';
+import { BrowserSession } from './browserSession.js';
 
 const web = fileURLToPath(new URL('../web', import.meta.url));
 
@@ -26,34 +27,37 @@ async function main(): Promise<void> {
   const logger = new Logger(join(dataRoot, 'calisma.log'));
   const profile = chromeProfilePath(dataRoot);
 
-  let browser: ChatgptBrowser | null = null;
+  // The session answers "is the browser open" from the handle itself, so a
+  // window the USER closes is noticed too — see src/browserSession.ts.
+  const session = new BrowserSession(() => {
+    const fresh = new ChatgptBrowser(profile, (message) => logger.info(message));
+    fresh.onClosed(() => logger.info('tarayıcı penceresi dışarıdan kapatıldı'));
+    return fresh;
+  });
 
   /**
    * Opens the browser and navigates to chatgpt.com — does not start a job.
    * The user logs in to ChatGPT in this window, then presses Start.
    */
   const openBrowser = async (): Promise<void> => {
-    if (browser) return;
-    const fresh = new ChatgptBrowser(profile, (message) => logger.info(message));
-    await fresh.launch(); // on failure `browser` stays null, can be retried
-    browser = fresh;
+    if (session.isOpen()) return;
+    await session.open(); // on failure the session stays closed, can be retried
     logger.info('tarayıcı açıldı; ChatGPT girişi kullanıcıya bırakıldı');
   };
 
-  /** Closes the browser and resets state; a close failure does not affect the job. */
-  const closeBrowser = async (): Promise<void> => {
-    const open = browser;
-    browser = null; // reset first: even if closing hangs, the UI sees "closed"
-    await open?.close().catch(() => {});
-  };
-
-  const startJob = (project: Project): void => {
-    void (async () => {
+  // Returns a promise so the start route can refuse a second start while this
+  // one is still preparing. It never rejects: every failure is handled below.
+  const startJob = (project: Project): Promise<void> =>
+    (async () => {
+      // Everything before `jobManager.start()` runs AFTER the route already
+      // answered 202. If it throws, the manager never took the job over, so it
+      // is on us to report the failure — see the catch below.
+      let handedOver = false;
       try {
         mkdirSync(project.ciktiKlasoru, { recursive: true });
         await openBrowser();
-        // Local invariant: the `browser` narrowing does not carry into the closure below.
-        const openedBrowser = browser;
+        // Local invariant: the session's narrowing does not carry into the closure below.
+        const openedBrowser = session.get();
         if (!openedBrowser) throw new Error('tarayıcı açılamadı');
 
         const config = configFromProject(project, profile);
@@ -61,6 +65,7 @@ async function main(): Promise<void> {
         const tabCount = Math.min(config.esZamanliSekme, Math.max(project.satirlar.length, 1));
         const tabs = await openedBrowser.prepareTabs(tabCount);
 
+        handedOver = true;
         const summary = await jobManager.start({
           projectId: project.id,
           config,
@@ -77,17 +82,22 @@ async function main(): Promise<void> {
         // run no Chromium window should be left around. When the user STOPPED
         // we do not close: stopping usually means they want to look at something.
         if (jobManager.info().status === 'finished') {
-          await closeBrowser();
+          await session.close();
           logger.info(
             `iş bitti (başarılı ${summary.succeeded}, atlanan ${summary.skipped}, ` +
               `başarısız ${summary.failed}); tarayıcı kapatıldı`,
           );
         }
       } catch (error) {
-        logger.error(`iş başarısız: ${(error as Error).message}`);
+        const message = (error as Error).message;
+        logger.error(`iş başarısız: ${message}`);
+        // `jobManager.start()` reports its own failures (status 'error' + the
+        // event). Only a throw from BEFORE the hand-over would otherwise go
+        // unseen — the route already replied 202, so without this the user
+        // presses Başlat and nothing whatsoever happens on screen.
+        if (!handedOver) jobManager.fail(message, project.id);
       }
     })();
-  };
 
   // The real port is only known after listen(); because allowedOrigin is a
   // function it is read at request time and the server does not need to be
@@ -97,7 +107,7 @@ async function main(): Promise<void> {
   const app = createServer({
     store, jobManager, startJob, token,
     openBrowser,
-    isBrowserOpen: () => browser !== null,
+    isBrowserOpen: () => session.isOpen(),
     allowedOrigin: () => address,
     webFolder: web, openFolder,
   });
@@ -112,7 +122,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     await app.close();
-    await browser?.close().catch(() => {});
+    await session.close();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

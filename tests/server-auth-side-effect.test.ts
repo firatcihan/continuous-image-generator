@@ -37,7 +37,7 @@ beforeEach(() => {
   app = createServer({
     store,
     jobManager: new JobManager(),
-    startJob: () => sideEffects.push('is-baslatildi'),
+    startJob: () => { sideEffects.push('is-baslatildi'); },
     openBrowser: async () => {
       sideEffects.push('tarayici-acildi');
     },

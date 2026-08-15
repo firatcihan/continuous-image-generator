@@ -15,7 +15,12 @@ import { readCookieToken, isRequestAuthorized } from './security.js';
 export interface ServerDeps {
   store: ProjectStore;
   jobManager: JobManager;
-  startJob: (project: Project) => void;
+  /**
+   * Kicks the job off. The returned promise (when there is one) settles once
+   * the preparation is over, and the start route uses it to refuse a second
+   * start meanwhile — see the `preparing` latch there.
+   */
+  startJob: (project: Project) => void | Promise<void>;
   /** Opens the browser without starting a job — so the user can log in to ChatGPT. */
   openBrowser: () => Promise<void>;
   isBrowserOpen: () => boolean;
@@ -32,7 +37,15 @@ declare module 'fastify' {
 }
 
 export function createServer(d: ServerDeps): FastifyInstance {
-  const app = Fastify({ logger: false });
+  // `forceCloseConnections`: the UI page keeps an SSE connection
+  // (`/api/job/stream`) open for its entire lifetime, and an SSE response
+  // never ends by itself. Fastify's default ('idle') only closes connections
+  // with no request in flight — an SSE connection has one, forever — so
+  // `close()` waited for a drain that could not happen and start.ts's SIGINT
+  // handler never reached `process.exit(0)`: Ctrl+C did nothing and the user
+  // had to kill -9. This is a local single-user tool being shut down on
+  // purpose; cutting the sockets is exactly the wanted behavior.
+  const app = Fastify({ logger: false, forceCloseConnections: true });
   app.decorate('testJobManager', d.jobManager);
 
   // Unexpected error: the body must carry the same shape as every route
@@ -65,6 +78,9 @@ export function createServer(d: ServerDeps): FastifyInstance {
     }
     return project;
   };
+
+  /** Non-null while a start is handed off but the job has not taken over yet. */
+  let preparing: Promise<void> | null = null;
 
   /** True when this project is generating right now — the edit and delete lock. */
   const isProjectRunning = (id: string): boolean =>
@@ -356,7 +372,15 @@ export function createServer(d: ServerDeps): FastifyInstance {
   });
 
   app.post('/api/job/start', async (request, reply) => {
-    if (isBusy(d.jobManager)) {
+    // `isBusy` alone cannot guard this. The job manager only turns busy AFTER
+    // the preparation `startJob` performs (creating the output folder, opening
+    // the browser, preparing tabs), and the route answers 202 long before
+    // that. So two clicks landing together both sailed through the busy check,
+    // and the loser then threw inside a detached async function where the only
+    // trace was a line in calisma.log. The latch closes that window; it clears
+    // itself when the preparation settles, so a stuck latch cannot lock the
+    // user out of ever starting a job.
+    if (preparing !== null || isBusy(d.jobManager)) {
       return reply.code(409).send({ error: 'bir iş zaten çalışıyor' });
     }
 
@@ -382,7 +406,12 @@ export function createServer(d: ServerDeps): FastifyInstance {
       });
     }
 
-    d.startJob(project);
+    preparing = Promise.resolve(d.startJob(project))
+      // Reporting the failure is start.ts's job (it logs and calls
+      // jobManager.fail); here the catch exists only so the latch is released
+      // and no unhandled rejection escapes.
+      .catch(() => {})
+      .finally(() => { preparing = null; });
     return reply.code(202).send({ started: true });
   });
 

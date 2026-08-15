@@ -4,6 +4,7 @@ import type { JobGates, Gate } from './job/gate.js';
 import type { Logger } from './logger.js';
 import { buildPrompt } from './prompt.js';
 import { detectRateLimit } from './rateLimit.js';
+import { isFileSystemError } from './fsError.js';
 import type { Config, RunSummary, Row, GenerationTab } from './types.js';
 
 export type SleepReason = 'betweenRows' | 'rateLimit' | 'transientError' | 'startup';
@@ -13,6 +14,13 @@ export type SleepReason = 'betweenRows' | 'rateLimit' | 'transientError' | 'star
  * Kept short: this is not a rate limit, it is a momentary server-side hiccup.
  */
 const TRANSIENT_ERROR_WAIT_MS = 10_000;
+
+/**
+ * How many times a single row may send the user a "fix this and press Devam"
+ * card before we stop asking and just try. Guards against a wrong DOM check
+ * trapping the user in a loop only Durdur can break — see `processRow`.
+ */
+const MAX_USER_WAITS = 5;
 
 export interface JobControl {
   signal: AbortSignal;
@@ -125,6 +133,8 @@ async function processRow(
   let attempt = 0;
   /** How many times we waited on someone else's restart — livelock brake. */
   let restartWaits = 0;
+  /** How many times we asked the user to fix something for THIS row. */
+  let userWaits = 0;
 
   let lastReason = 'bilinmiyor';
 
@@ -136,7 +146,18 @@ async function processRow(
     try {
       await tab.openNewChat();
 
-      if (!(await tab.isLoggedIn())) {
+      // Both checks below read ChatGPT's DOM and can simply be WRONG — a
+      // login button lingering in some logged-in state, a renamed model
+      // switcher. When that happens the user is trapped: they press Devam, the
+      // same card pops straight back, and the only way out is Durdur. Their
+      // repeated confirmation is better evidence than our own selector, so
+      // past this many asks we stop checking and just attempt generation. A
+      // genuinely dead session then fails through the normal retry path, with
+      // a real error instead of a loop.
+      const trustUser = userWaits >= MAX_USER_WAITS;
+
+      if (!trustUser && !(await tab.isLoggedIn())) {
+        userWaits++;
         d.logger.warn('oturum kapalı görünüyor; kullanıcı girişi bekleniyor');
         await d.waitForUser(
           'ChatGPT oturumu kapalı. Açılan tarayıcıda elle giriş yapın, sonra Devam edin.',
@@ -144,9 +165,10 @@ async function processRow(
         continue; // no retry attempt burned
       }
 
-      if (d.config.modelAdi !== '') {
+      if (!trustUser && d.config.modelAdi !== '') {
         const activeModel = await tab.activeModelName();
         if (!activeModel.toLowerCase().includes(d.config.modelAdi.toLowerCase())) {
+          userWaits++;
           d.logger.warn(`beklenen model "${d.config.modelAdi}", aktif model "${activeModel}"`);
           await d.waitForUser(
             `Yanlış model seçili (aktif: "${activeModel}", beklenen: "${d.config.modelAdi}"). ` +
@@ -154,6 +176,14 @@ async function processRow(
           );
           continue; // no retry attempt burned
         }
+      }
+
+      if (trustUser && userWaits === MAX_USER_WAITS) {
+        userWaits++; // log the crossing once, not on every later pass
+        d.logger.warn(
+          `${MAX_USER_WAITS} onaya rağmen kontroller geçmedi; kontroller atlanıp` +
+            ` üretim deneniyor (satır: ${record.dosyaAdi})`,
+        );
       }
 
       const result = await tab.generateImage(prompt, d.config.uretimZamanAsimiSn);
@@ -216,9 +246,25 @@ async function processRow(
       }
 
       attempt++;
-      lastReason = `tarayıcı hatası: ${(error as Error).message.slice(0, 120)}`;
+      const message = (error as Error).message;
+
+      // A full disk, a vanished output folder or a permission problem is not
+      // something relaunching Chromium can fix. Restarting for it cost a full
+      // browser cycle PLUS the retry budget on EVERY remaining row, turning a
+      // clean failure into hours of thrashing. Let the row fail fast instead;
+      // the reason lands in basarisizlar.csv where the user can act on it.
+      if (isFileSystemError(error)) {
+        lastReason = `görsel kaydedilemedi: ${message.slice(0, 120)}`;
+        d.logger.error(
+          `dosya yazma hatası (${attempt}/${d.config.tekrarDenemeSayisi}): ${message};` +
+            ' tarayıcı yeniden başlatılmıyor — sorun diskte',
+        );
+        continue;
+      }
+
+      lastReason = `tarayıcı hatası: ${message.slice(0, 120)}`;
       d.logger.error(
-        `tarayıcı hatası (${attempt}/${d.config.tekrarDenemeSayisi}): ${(error as Error).message}; yeniden başlatılıyor`,
+        `tarayıcı hatası (${attempt}/${d.config.tekrarDenemeSayisi}): ${message}; yeniden başlatılıyor`,
       );
       await d.restartBrowser();
     }
