@@ -179,6 +179,22 @@ textarea.code {
   background: var(--panel); border-right: 1px solid var(--line);
   position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 18px 14px;
 }
+/* The biVaryasyon wordmark. Its size is set by whoever places it (nav ~15px,
+   footer ~12px); the two halves keep their proportions and the grey-"bi" /
+   light-mono contrast at every size. `--text` carries the main colour so a
+   light surface would flip it to #0a0a0a while "bi" stays grey either way. */
+.brand { padding: 0 4px 16px 8px; }
+.wordmark {
+  display: inline-flex; align-items: baseline;
+  font-family: var(--mono); font-size: 15px; font-weight: 600;
+  letter-spacing: .04em; line-height: 1; color: var(--text);
+  text-transform: none; user-select: none;
+}
+.wordmark .bi {
+  font-family: var(--sans); font-style: italic; font-weight: 700;
+  letter-spacing: normal; color: #8b8b8b; margin-right: 1px;
+}
+
 .side-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 4px 14px 8px; font-size: 11px; font-weight: 600;
