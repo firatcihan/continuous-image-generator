@@ -1,6 +1,6 @@
 [![EN](https://img.shields.io/badge/lang-English-blue.svg)](README.md) [![TR](https://img.shields.io/badge/dil-T%C3%BCrk%C3%A7e-red.svg)](README.tr.md)
 
-# ChatGPT Görsel Üretici
+# bi{Varyasyon} Görsel Üretici
 
 ChatGPT web arayüzünü otomatize ederek bir base prompt'un varyasyonlarıyla
 toplu (100-200 adet) görsel üretir ve her birini sizin verdiğiniz adla klasöre
