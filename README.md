@@ -1,6 +1,6 @@
 [![EN](https://img.shields.io/badge/lang-English-blue.svg)](README.md) [![TR](https://img.shields.io/badge/dil-T%C3%BCrk%C3%A7e-red.svg)](README.tr.md)
 
-# ChatGPT Image Generator
+# bi{Varyasyon} Continuous Image Generator
 
 Automates the ChatGPT web UI to batch-generate images (100-200 at a time)
 from variations of a base prompt, saving each one into a folder under the
